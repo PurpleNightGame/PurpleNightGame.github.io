@@ -21,7 +21,13 @@ jobs:
           cache: 'npm'
           
       - name: Install Dependencies
-        run: npm ci
+        run: |
+          npm install
+          npm install typescript@latest
+          
+      - name: Type Check
+        run: npm run type-check
+        continue-on-error: true
         
       - name: Build
         run: npm run build
