@@ -240,7 +240,7 @@ const filteredData = computed(() => {
 // 修改分页配置
 const pagination = ref({
   page: 1,
-  pageSize: 10,
+  pageSize: Number(localStorage.getItem('memberStatusPageSize')) || 10,
   itemCount: computed(() => filteredData.value.length),
   showSizePicker: true,
   pageSizes: [10, 20, 30, 40, 50, 100],
@@ -365,22 +365,37 @@ const columns = [
   {
     title: '昵称',
     key: 'nickname',
-    width: 120
+    width: 120,
+    sorter: 'default'
   },
   {
     title: 'QQ号',
     key: 'qq',
-    width: 120
+    width: 120,
+    sorter: (row1: any, row2: any) => Number(row1.qq) - Number(row2.qq)
   },
   {
     title: '游戏ID',
     key: 'gameId',
-    width: 120
+    width: 120,
+    sorter: 'default'
   },
   {
     title: '阶段',
     key: 'stage',
     width: 100,
+    sorter: (row1: any, row2: any) => {
+      const stageOrder = {
+        '未新训': 0,
+        '新训初期': 1,
+        '新训1期': 2,
+        '新训2期': 3,
+        '新训3期': 4,
+        '新训准考': 5,
+        '紫夜': 6
+      }
+      return stageOrder[row1.stage] - stageOrder[row2.stage]
+    },
     render(row: any) {
       const stageTypeMap = {
         '未新训': 'error',
@@ -411,6 +426,7 @@ const columns = [
     title: '请假状态',
     key: 'onLeave',
     width: 100,
+    sorter: (row1: any, row2: any) => Number(row1.onLeave) - Number(row2.onLeave),
     render(row: any) {
       return h(
         NTag,
@@ -426,6 +442,14 @@ const columns = [
     title: '留队申请',
     key: 'leaveRequest',
     width: 100,
+    sorter: (row1: any, row2: any) => {
+      const requestOrder = {
+        '未申请': 0,
+        '未通过': 1,
+        '通过': 2
+      }
+      return requestOrder[row1.leaveRequest] - requestOrder[row2.leaveRequest]
+    },
     render(row: any) {
       const typeMap = {
         '未申请': 'default',
@@ -446,6 +470,17 @@ const columns = [
     title: '状态',
     key: 'status',
     width: 100,
+    sorter: (row1: any, row2: any) => {
+      const statusOrder = {
+        '正常': 0,
+        '异常': 1,
+        '催促参训': 2,
+        '未训退队': 3,
+        '超时退队': 4,
+        '违规退队': 5
+      }
+      return statusOrder[row1.status] - statusOrder[row2.status]
+    },
     render(row: any) {
       return h(
         NTag,
@@ -485,6 +520,8 @@ const handlePageChange = (page: number) => {
 // 处理每页条数变化
 const handlePageSizeChange = (pageSize: number) => {
   pagination.value.pageSize = pageSize
+  // 保存到 localStorage
+  localStorage.setItem('memberStatusPageSize', pageSize.toString())
   // 如果当前页超出了新的页数范围，则调整到最后一页
   const maxPage = Math.ceil(filteredData.value.length / pageSize)
   if (pagination.value.page > maxPage) {

@@ -7,7 +7,7 @@ import { createDiscreteApi } from 'naive-ui'
 const { message } = createDiscreteApi(['message'])
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
@@ -117,6 +117,12 @@ const router = createRouter({
           meta: { requiresAuth: true, system: 'training' }
         }
       ]
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('../views/NotFound.vue'),
+      meta: { requiresAuth: false }
     }
   ]
 })
@@ -128,10 +134,22 @@ router.beforeEach(async (to, from, next) => {
     const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
     const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)
     
+    // 检查本地存储的登录状态
+    const remembered = localStorage.getItem('rememberLogin')
+    const sessionToken = localStorage.getItem('sessionToken')
+    
     if (requiresAuth) {
       // 检查用户是否已登录
       const isAuthenticated = authService.isAuthenticated()
-      if (!isAuthenticated) {
+      if (!isAuthenticated || !sessionToken) {
+        // 如果没有记住登录或会话无效，清除所有存储的登录信息
+        if (remembered !== 'true' || !sessionToken) {
+          localStorage.removeItem('rememberLogin')
+          localStorage.removeItem('username')
+          localStorage.removeItem('userRole')
+          localStorage.removeItem('sessionToken')
+          localStorage.removeItem('userId')
+        }
         next({ name: 'login' })
         return
       }
@@ -148,7 +166,7 @@ router.beforeEach(async (to, from, next) => {
     }
 
     // 如果用户已登录且尝试访问登录页，重定向到首页
-    if (to.name === 'login' && authService.isAuthenticated()) {
+    if (to.name === 'login' && authService.isAuthenticated() && sessionToken) {
       next('/training')
       return
     }
@@ -157,6 +175,12 @@ router.beforeEach(async (to, from, next) => {
   } catch (error) {
     console.error('路由守卫错误:', error)
     message.error('系统错误，请重新登录')
+    // 发生错误时清除所有登录信息
+    localStorage.removeItem('rememberLogin')
+    localStorage.removeItem('username')
+    localStorage.removeItem('userRole')
+    localStorage.removeItem('sessionToken')
+    localStorage.removeItem('userId')
     next({ name: 'login' })
   }
 })

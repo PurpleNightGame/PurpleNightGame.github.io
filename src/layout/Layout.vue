@@ -457,7 +457,11 @@ const username = computed(() => {
   return user?.username || '用户'
 })
 
-const userAvatar = ref('https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg') // 默认头像
+// 用户头像
+const userAvatar = computed(() => {
+  const user = authService.getCurrentUser()
+  return user?.avatar || 'https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg'
+})
 
 // 用户菜单选项
 const userMenuOptions = [
@@ -465,6 +469,9 @@ const userMenuOptions = [
     label: '用户设置',
     key: 'settings',
     icon: renderIcon(SettingsOutline)
+  },
+  {
+    type: 'divider'
   },
   {
     label: '退出登录',
@@ -688,19 +695,20 @@ const handleUserSettingsSuccess = () => {
   display: flex;
   align-items: center;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 12px;
   border-radius: 6px;
-  transition: background-color 0.3s;
+  transition: all 0.3s ease-in-out;
 }
 
 .avatar-wrapper:hover {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: rgba(123, 31, 162, 0.1);
 }
 
 .username {
   margin-left: 8px;
-  font-size: 0.9rem;
+  font-size: 14px;
   color: #666;
+  font-weight: 500;
 }
 
 .sider {
@@ -710,5 +718,21 @@ const handleUserSettingsSuccess = () => {
 .content {
   padding: 24px;
   background: #f5f5f5;
+}
+
+:deep(.n-dropdown-menu) {
+  min-width: 120px;
+}
+
+:deep(.n-dropdown-option) {
+  padding: 8px 12px;
+}
+
+:deep(.n-dropdown-option-body--selected) {
+  color: #7B1FA2;
+}
+
+:deep(.n-dropdown-option:hover) {
+  background-color: rgba(123, 31, 162, 0.1);
 }
 </style> 

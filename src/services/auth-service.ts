@@ -27,11 +27,11 @@ class AuthService {
       }
       
       const userData: User = {
-        id: user.id,
+        id: user.id || '',
         username: this.ensureString(user.get('username'), 'unknown'),
         role: user.get('role') || null,
         avatar: user.get('avatar'),
-        sessionToken: user.getSessionToken()
+        sessionToken: user.getSessionToken() || undefined
       }
       
       this.currentUser = userData
@@ -51,11 +51,11 @@ class AuthService {
       
       const storedUsername = user.get('username')
       const userData: User = {
-        id: user.id,
+        id: user.id || '',
         username: this.ensureString(storedUsername, username),
         role: user.get('role') || null,
         avatar: user.get('avatar'),
-        sessionToken: user.getSessionToken()
+        sessionToken: user.getSessionToken() || undefined
       }
       
       this.currentUser = userData
@@ -69,6 +69,9 @@ class AuthService {
     try {
       await AV.User.logOut()
       this.currentUser = null
+      // 清除所有本地存储的登录信息
+      const keys = ['rememberLogin', 'username', 'userRole', 'sessionToken', 'userId']
+      keys.forEach(key => localStorage.removeItem(key))
     } catch (error: any) {
       throw new Error('退出登录失败：' + error.message)
     }
@@ -80,7 +83,7 @@ class AuthService {
       if (user) {
         const storedUsername = user.get('username')
         this.currentUser = {
-          id: user.id,
+          id: user.id || '',
           username: this.ensureString(storedUsername, 'unknown'),
           role: user.get('role') || null,
           avatar: user.get('avatar') || undefined
@@ -152,7 +155,7 @@ class AuthService {
       // 更新本地用户信息
       const storedUsername = user.get('username')
       const userData: User = {
-        id: user.id,
+        id: user.id || '',
         username: this.ensureString(storedUsername, info.username),
         role: user.get('role') || null,
         avatar: user.get('avatar') || undefined

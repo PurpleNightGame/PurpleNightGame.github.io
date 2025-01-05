@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref, computed, onMounted, onUnmounted } from 'vue'
+import { h, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { 
   NButton, 
   NSpace, 
@@ -89,54 +89,6 @@ const searchText = ref('')
 const statusFilter = ref(null)
 const dateRange = ref(null)
 
-// 添加分页配置
-const pagination = ref({
-  page: 1,
-  pageSize: 10,
-  itemCount: 0,
-  showSizePicker: true,
-  pageSizes: [10, 20, 30, 40]
-})
-
-// 处理分页变化
-const handlePageChange = (page: number) => {
-  pagination.value.page = page
-}
-
-// 从数据库加载数据
-const loadFromStorage = async (): Promise<EndedLeave[]> => {
-  try {
-    loading.value = true
-    // 获取所有请假记录
-    const records = await LeaveService.getAllLeaveRecords()
-    const members = await MemberService.getAllMembers()
-    
-    // 只显示"等待销假"状态的记录
-    const waitingRecords = records.filter(record => record.status === '等待销假')
-    
-    return waitingRecords.map(record => {
-      const member = members.find(m => m.objectId === record.memberId)
-      return {
-        id: record.objectId,
-        memberId: record.memberId,
-        memberName: member ? member.nickname : '未知成员',
-        memberQQ: member ? member.qq : '',
-        startDate: record.startDate,
-        endDate: record.endDate,
-        endedDate: '',
-        status: record.status,
-        reason: record.reason
-      }
-    })
-  } catch (e) {
-    console.error('Failed to load data:', e)
-    message.error('加载数据失败')
-    return []
-  } finally {
-    loading.value = false
-  }
-}
-
 // 表格数据
 const tableData = ref<EndedLeave[]>([])
 
@@ -176,12 +128,91 @@ const filteredData = computed(() => {
              (recordStartTime <= startTime && recordEndTime >= endTime)
     })
   }
-
-  // 更新分页总数
-  pagination.value.itemCount = result.length
   
   return result
 })
+
+// 计算总条数
+const itemCount = computed(() => filteredData.value.length)
+
+// 修改分页配置
+const pagination = ref({
+  page: 1,
+  pageSize: Number(localStorage.getItem('endLeavePageSize')) || 10,
+  showSizePicker: true,
+  pageSizes: [10, 20, 30, 40, 50, 100],
+  prefix: ({ itemCount }) => `共 ${itemCount} 条数据`,
+  suffix: ({ page, pageSize, pageCount }) =>
+    `第 ${page} 页 / 共 ${pageCount} 页`
+})
+
+// 监听itemCount的变化并更新pagination
+watch(itemCount, (newCount) => {
+  pagination.value = {
+    ...pagination.value,
+    itemCount: newCount
+  }
+})
+
+// 处理每页条数变化
+const handlePageSizeChange = (pageSize: number) => {
+  pagination.value = {
+    ...pagination.value,
+    pageSize
+  }
+  // 保存到 localStorage
+  localStorage.setItem('endLeavePageSize', pageSize.toString())
+  // 如果当前页超出了新的页数范围，则调整到最后一页
+  const maxPage = Math.ceil(filteredData.value.length / pageSize)
+  if (pagination.value.page > maxPage) {
+    pagination.value = {
+      ...pagination.value,
+      page: maxPage
+    }
+  }
+}
+
+// 处理分页变化
+const handlePageChange = (page: number) => {
+  pagination.value = {
+    ...pagination.value,
+    page
+  }
+}
+
+// 从数据库加载数据
+const loadFromStorage = async (): Promise<EndedLeave[]> => {
+  try {
+    loading.value = true
+    // 获取所有请假记录
+    const records = await LeaveService.getAllLeaveRecords()
+    const members = await MemberService.getAllMembers()
+    
+    // 只显示"等待销假"状态的记录
+    const waitingRecords = records.filter(record => record.status === '等待销假')
+    
+    return waitingRecords.map(record => {
+      const member = members.find(m => m.objectId === record.memberId)
+      return {
+        id: record.objectId,
+        memberId: record.memberId,
+        memberName: member ? member.nickname : '未知成员',
+        memberQQ: member ? member.qq : '',
+        startDate: record.startDate,
+        endDate: record.endDate,
+        endedDate: '',
+        status: record.status,
+        reason: record.reason
+      }
+    })
+  } catch (e) {
+    console.error('Failed to load data:', e)
+    message.error('加载数据失败')
+    return []
+  } finally {
+    loading.value = false
+  }
+}
 
 // 表格列配置
 const columns = [

@@ -79,19 +79,18 @@ const handleLogin = async () => {
     console.log('登录成功:', user)
     message.success('登录成功')
     
-    // 如果选择了记住登录状态，将登录信息保存到 localStorage
+    // 总是保存会话令牌和用户ID，因为这些是必需的
+    localStorage.setItem('sessionToken', user.sessionToken)
+    localStorage.setItem('userId', user.id)
+    localStorage.setItem('userRole', user.role)
+    
+    // 只有在选择了记住登录状态时才保存额外的信息
     if (rememberLogin.value) {
       localStorage.setItem('rememberLogin', 'true')
       localStorage.setItem('username', username.value)
-      localStorage.setItem('userRole', user.role)
-      localStorage.setItem('sessionToken', user.sessionToken)
-      localStorage.setItem('userId', user.id)
     } else {
       localStorage.removeItem('rememberLogin')
       localStorage.removeItem('username')
-      localStorage.removeItem('userRole')
-      localStorage.removeItem('sessionToken')
-      localStorage.removeItem('userId')
     }
     
     // 根据用户角色重定向

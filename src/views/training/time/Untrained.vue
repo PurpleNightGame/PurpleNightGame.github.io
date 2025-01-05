@@ -154,27 +154,57 @@ const loadFromStorage = async (): Promise<UntrainedMember[]> => {
 // 自动处理未训退队
 const handleAutoQuit = async (member: any) => {
   try {
-    const quitData = {
-      memberId: member.objectId,
-      memberName: member.nickname,
-      memberQQ: member.qq,
-      quitDate: new Date().toISOString().split('T')[0],
-      quitType: '未训退队',
-      reason: '加入3天内未参加新训',
-      recorder: 'System'
+    // 验证必要的成员信息是否存在
+    if (!member || !member.objectId) {
+      console.error('无效的成员数据:', member)
+      return
     }
 
-    await QuitService.addQuitRecord(quitData)
+    // 检查是否已经有退队记录
+    const quitRecords = await QuitService.getAllQuitRecords()
+    const hasQuitRecord = quitRecords.some(record => 
+      record.memberId === member.objectId && record.quitType === '未训退队'
+    )
     
-    // 更新成员状态
-    await MemberService.updateMember(member.objectId, {
-      ...member,
-      hasQuitRecord: true,
-      status: '已退队'
-    })
+    if (!hasQuitRecord) {
+      const quitData = {
+        memberId: member.objectId,
+        memberName: member.nickname,
+        memberQQ: member.qq,
+        quitDate: new Date().toISOString().split('T')[0],
+        quitType: '未训退队',
+        reason: '加入3天内未参加新训',
+        recorder: 'System'
+      }
 
+      // 验证所有必要字段
+      const requiredFields = ['memberId', 'memberName', 'memberQQ', 'quitDate', 'quitType', 'reason', 'recorder']
+      const missingFields = requiredFields.filter(field => !quitData[field])
+      
+      if (missingFields.length > 0) {
+        console.error('缺少必要字段:', missingFields)
+        return
+      }
+
+      // 创建退队记录
+      await QuitService.addQuitRecord(quitData)
+      
+      // 更新成员状态
+      await MemberService.updateMember(member.objectId, {
+        status: '未训退队'
+      })
+
+      console.log('已自动创建未训退队记录:', member.nickname)
+    }
   } catch (e) {
     console.error('Failed to handle auto quit:', e)
+    if (member) {
+      console.error('成员信息:', {
+        id: member.objectId,
+        nickname: member.nickname,
+        qq: member.qq
+      })
+    }
   }
 }
 
@@ -230,7 +260,7 @@ const filteredData = computed(() => {
 // 修改分页配置
 const pagination = ref({
   page: 1,
-  pageSize: 10,
+  pageSize: Number(localStorage.getItem('untrainedPageSize')) || 10,
   itemCount: computed(() => filteredData.value.length),
   showSizePicker: true,
   pageSizes: [10, 20, 30, 40, 50, 100],
@@ -303,6 +333,8 @@ const handlePageChange = (page: number) => {
 // 处理每页条数变化
 const handlePageSizeChange = (pageSize: number) => {
   pagination.value.pageSize = pageSize
+  // 保存到 localStorage
+  localStorage.setItem('untrainedPageSize', pageSize.toString())
   // 如果当前页超出了新的页数范围，则调整到最后一页
   const maxPage = Math.ceil(filteredData.value.length / pageSize)
   if (pagination.value.page > maxPage) {

@@ -363,7 +363,7 @@ const filteredData = computed(() => {
 // 分页配置
 const pagination = ref({
   page: 1,
-  pageSize: 10,
+  pageSize: Number(localStorage.getItem('memberListPageSize')) || 10,
   showSizePicker: true,
   pageSizes: [10, 20, 30, 40, 50, 100],
   prefix: ({ itemCount }) => `共 ${itemCount} 条数据`,
@@ -571,6 +571,8 @@ const handlePageChange = (page: number) => {
 // 处理每页条数变化
 const handlePageSizeChange = (pageSize: number) => {
   pagination.value.pageSize = pageSize
+  // 保存到 localStorage
+  localStorage.setItem('memberListPageSize', pageSize.toString())
   // 如果当前页超出了新的页数范围，则调整到最后一页
   const maxPage = Math.ceil(filteredData.value.length / pageSize)
   if (pagination.value.page > maxPage) {

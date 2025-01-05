@@ -140,6 +140,14 @@ const loadFromStorage = async (): Promise<ReminderMember[]> => {
         const daysLeft = calculateDaysLeft(lastTrainingDate)
         const status = calculateStatus(lastTrainingDate)
 
+        // 如果状态是超时退队，自动添加到退队记录
+        if (status === '超时退队') {
+          handleAutoQuit({
+            ...member,
+            id: member.objectId
+          })
+        }
+
         return {
           id: member.objectId,
           nickname: member.nickname,
@@ -164,27 +172,57 @@ const loadFromStorage = async (): Promise<ReminderMember[]> => {
 // 自动处理超时退队
 const handleAutoQuit = async (member: any) => {
   try {
-    const quitData = {
-      memberId: member.objectId,
-      memberName: member.nickname,
-      memberQQ: member.qq,
-      quitDate: new Date().toISOString().split('T')[0],
-      quitType: '超时退队',
-      reason: '超过10天未新训',
-      recorder: 'System'
+    // 验证必要的成员信息是否存在
+    if (!member || !member.objectId) {
+      console.error('无效的成员数据:', member)
+      return
     }
 
-    await QuitService.addQuitRecord(quitData)
+    // 检查是否已经有退队记录
+    const quitRecords = await QuitService.getAllQuitRecords()
+    const hasQuitRecord = quitRecords.some(record => 
+      record.memberId === member.objectId && record.quitType === '超时退队'
+    )
     
-    // 更新成员状态
-    await MemberService.updateMember(member.objectId, {
-      ...member,
-      hasQuitRecord: true,
-      status: '已退队'
-    })
+    if (!hasQuitRecord) {
+      const quitData = {
+        memberId: member.objectId,
+        memberName: member.nickname,
+        memberQQ: member.qq,
+        quitDate: new Date().toISOString().split('T')[0],
+        quitType: '超时退队',
+        reason: '超过10天未新训',
+        recorder: 'System'
+      }
 
+      // 验证所有必要字段
+      const requiredFields = ['memberId', 'memberName', 'memberQQ', 'quitDate', 'quitType', 'reason', 'recorder']
+      const missingFields = requiredFields.filter(field => !quitData[field])
+      
+      if (missingFields.length > 0) {
+        console.error('缺少必要字段:', missingFields)
+        return
+      }
+
+      // 创建退队记录
+      await QuitService.addQuitRecord(quitData)
+      
+      // 更新成员状态
+      await MemberService.updateMember(member.objectId, {
+        status: '超时退队'
+      })
+
+      console.log('已自动创建超时退队记录:', member.nickname)
+    }
   } catch (e) {
     console.error('Failed to handle auto quit:', e)
+    if (member) {
+      console.error('成员信息:', {
+        id: member.objectId,
+        nickname: member.nickname,
+        qq: member.qq
+      })
+    }
   }
 }
 
@@ -227,8 +265,17 @@ const calculateStatus = (lastTrainingDate: string): '催促新训' | '超时退�
   const now = new Date()
   const diffDays = Math.floor((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24))
   
-  // 如果超过7天后的3天倒计时结束，则为超时退队
-  return diffDays >= 10 ? '超时退队' : '催促新训'
+  // 如果超过10天未新训，则为超时退队
+  if (diffDays >= 10) {
+    return '超时退队'
+  }
+  
+  // 如果超过7天但不到10天，则为催促新训
+  if (diffDays >= 7) {
+    return '催促新训'
+  }
+  
+  return '催促新训'
 }
 
 // 搜索和筛选状态
@@ -241,7 +288,7 @@ const maxDaysLeft = ref<number | null>(null)
 // 修改分页配置
 const pagination = ref({
   page: 1,
-  pageSize: 10,
+  pageSize: Number(localStorage.getItem('remindersPageSize')) || 10,
   showSizePicker: true,
   pageSizes: [10, 20, 30, 40, 50, 100],
   prefix: ({ itemCount }) => `共 ${itemCount} 条数据`,
@@ -258,6 +305,8 @@ const handlePageChange = (page: number) => {
 // 处理每页条数变化
 const handlePageSizeChange = (pageSize: number) => {
   pagination.value.pageSize = pageSize
+  // 保存到 localStorage
+  localStorage.setItem('remindersPageSize', pageSize.toString())
   // 如果当前页超出了新的页数范围，则调整到最后一页
   const maxPage = Math.ceil(filteredData.value.length / pageSize)
   if (pagination.value.page > maxPage) {
