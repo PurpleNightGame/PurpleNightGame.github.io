@@ -1,5 +1,8 @@
 import AV from 'leancloud-storage'
 import { ensureClass } from './leancloud-init'
+import { calculateMemberStatus } from './memberStatus'
+import { formatDate } from './date'
+import { QuitService } from './quit-service'
 
 // 添加类型定义
 interface EndedLeaveRecord {
@@ -51,15 +54,15 @@ export const MemberService = {
     const now = new Date()
 
     for (const member of members) {
-      if (member.stage === '未新训') {
+      if (member.stage === '未新训' && member.leaveRequest !== '通过') {
         const joinDate = new Date(member.joinTime)
         const daysSinceJoin = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
         
         // 根据加入时间计算状态
-        const newStatus: MemberStatus = daysSinceJoin > 3 ? '未训退队' : '催促参训'
+        const newStatus = daysSinceJoin > 3 ? '未训退队' : '催促参训'
         
-        // 强制更新未新训成员的状态
-        if (daysSinceJoin > 3 && member.status !== '未训退队') {
+        // 只有当成员没有通过留队申请时才更新状态
+        if (daysSinceJoin > 3 && member.status !== '未训退队' && member.leaveRequest !== '通过') {
           // 更新数据库中的状态
           await this.updateMember(member.objectId, {
             ...member,
@@ -127,54 +130,45 @@ export const MemberService = {
     return result.toJSON()
   },
 
-  // 更新成员
+  // 更新成员信息
   async updateMember(id: string, memberData: any) {
     try {
       await ensureClass('training_members')
       const member = AV.Object.createWithoutData('training_members', id)
       
+      // 获取当前的黑点记录和请假记录
+      const blacklistQuery = new AV.Query('blacklist_records')
+      const leaveQuery = new AV.Query('leave_records')
+      const [blacklistResults, leaveResults] = await Promise.all([
+        blacklistQuery.find(),
+        leaveQuery.find()
+      ])
+      const blacklistRecords = blacklistResults.map(record => record.toJSON())
+      const leaveRecords = leaveResults.map(record => record.toJSON())
+
+      // 如果要更新状态，先重新计算
+      if ('status' in memberData || 'leaveRequest' in memberData) {
+        // 如果留队申请通过，强制设置状态为正常
+        if (memberData.leaveRequest === '通过') {
+          memberData.status = '正常'
+        } else {
+          const currentStatus = calculateMemberStatus(memberData, blacklistRecords, leaveRecords)
+          memberData.status = currentStatus
+        }
+      }
+      
       // 单独处理每个字段
-      if ('joinTime' in memberData) {
-        member.set('joinTime', String(memberData.joinTime))
-      }
-      
-      if ('lastTrainingDate' in memberData) {
-        member.set('lastTrainingDate', String(memberData.lastTrainingDate))
-      }
-      
-      if ('nickname' in memberData) {
-        member.set('nickname', String(memberData.nickname))
-      }
-      
-      if ('qq' in memberData) {
-        member.set('qq', String(memberData.qq))
-      }
-      
-      if ('gameId' in memberData) {
-        member.set('gameId', String(memberData.gameId))
-      }
-      
-      if ('stage' in memberData) {
-        member.set('stage', String(memberData.stage))
-      }
-      
-      if ('status' in memberData) {
-        member.set('status', String(memberData.status))
-      }
-      
-      if ('passDate' in memberData) {
-        member.set('passDate', String(memberData.passDate))
+      for (const [key, value] of Object.entries(memberData)) {
+        if (key !== 'objectId' && key !== 'id') {
+          member.set(key, value)
+        }
       }
 
-      if ('leaveRequest' in memberData) {
-        member.set('leaveRequest', String(memberData.leaveRequest))
-      }
-      
-      console.log('准备保存的数据:', member.toJSON())
-      const result = await member.save()
-      return result.toJSON()
+      console.log('准备保存的数据:', memberData)
+      await member.save()
+      return member.toJSON()
     } catch (error) {
-      console.error('更新成员失败:', error)
+      console.error('Failed to update member:', error)
       throw error
     }
   },

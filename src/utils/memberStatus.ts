@@ -27,25 +27,29 @@ export const calculateMemberStatus = (member: any, blacklistRecords: any[], leav
     return '正常'
   }
 
-  // 其他状态判断逻辑
-  const joinDate = new Date(member.joinTime)
-  const now = new Date()
-  const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
-
-  if (member.stage === '未新训' && diffDays > 3) {
-    return '未训退队'
+  // 如果成员是未新训且加入超过3天，且留队申请未通过，返回未训退队
+  if (member.stage === '未新训') {
+    const joinDate = new Date(member.joinTime)
+    const now = new Date()
+    const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
+    
+    if (diffDays > 3 && member.leaveRequest !== '通过') {
+      return '未训退队'
+    }
   }
 
-  if (member.lastTrainingDate) {
+  // 检查最后训练日期
+  if (member.lastTrainingDate && member.lastTrainingDate !== 'null') {
     const lastDate = new Date(member.lastTrainingDate)
+    const now = new Date()
     const trainingDiffDays = Math.floor((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24))
     
-    if (trainingDiffDays >= 10) {
+    if (trainingDiffDays >= 10 && member.leaveRequest !== '通过') {
       return '超时退队'
-    } else if (trainingDiffDays >= 7) {
+    } else if (trainingDiffDays >= 7 && member.leaveRequest !== '通过') {
       return '催促参训'
     }
   }
 
-  return member.status || '正常'
+  return '正常'
 } 
