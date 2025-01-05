@@ -4,6 +4,7 @@ import { resolve } from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: '/member-management-system/',
   plugins: [vue()],
   server: {
     port: 8080,
