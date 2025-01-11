@@ -3,6 +3,180 @@ import { ensureClass } from './leancloud-init'
 import { calculateMemberStatus } from './memberStatus'
 import { formatDate } from './date'
 import { QuitService } from './quit-service'
+import { authService } from '../services/auth-service'
+import { createDiscreteApi } from 'naive-ui'
+import router from '../router'
+
+const { message } = createDiscreteApi(['message'])
+
+// 用于控制错误提示的显示
+let isShowingError = false
+
+// 清除用户数据的函数，但保留记住登录相关的信息
+function clearUserData() {
+  const remembered = localStorage.getItem('rememberLogin') === 'true'
+  const username = localStorage.getItem('username')
+  
+  // 清除所有存储
+  localStorage.clear()
+  
+  // 如果之前是记住登录状态，保留相关信息
+  if (remembered) {
+    localStorage.setItem('rememberLogin', 'true')
+    if (username) {
+      localStorage.setItem('username', username)
+    }
+  }
+}
+
+// 添加请求限流和缓存相关的工具
+const requestQueue: Array<() => Promise<any>> = []
+let isProcessingQueue = false
+const requestCache = new Map<string, { data: any; timestamp: number }>()
+const CACHE_DURATION = 300000 // 缓存有效期5分钟
+
+// 添加全局验证状态
+let isValidating = false
+let lastValidationTime = 0
+
+// 限流处理函数
+async function processQueue() {
+  if (isProcessingQueue) return
+  isProcessingQueue = true
+
+  while (requestQueue.length > 0) {
+    const request = requestQueue.shift()
+    if (request) {
+      try {
+        await request()
+        // 请求间隔增加到500ms
+        await sleep(500)
+      } catch (error) {
+        console.warn('Request failed:', error)
+      }
+    }
+  }
+
+  isProcessingQueue = false
+}
+
+// 带缓存的请求函数
+async function withCache<T>(
+  cacheKey: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const cached = requestCache.get(cacheKey)
+  const now = Date.now()
+
+  if (cached && now - cached.timestamp < CACHE_DURATION) {
+    return cached.data
+  }
+
+  const result = await operation()
+  requestCache.set(cacheKey, { data: result, timestamp: now })
+  return result
+}
+
+// 修改验证用户函数
+export async function validateUser() {
+  const now = Date.now()
+  const cacheKey = 'validateUser'
+  const cached = requestCache.get(cacheKey)
+
+  // 如果缓存有效，直接返回
+  if (cached && now - cached.timestamp < CACHE_DURATION) {
+    return cached.data
+  }
+
+  // 如果正在验证中，等待一段时间后返回
+  if (isValidating) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    return validateUser()
+  }
+
+  try {
+    isValidating = true
+
+    // 检查是否需要完整验证
+    const needFullValidation = !lastValidationTime || (now - lastValidationTime > CACHE_DURATION)
+    
+    // 1. 检查本地状态
+    const currentUser = await authService.getCurrentUser()
+    if (!currentUser) {
+      throw new Error('用户未登录')
+    }
+
+    // 如果不需要完整验证，只检查本地状态
+    if (!needFullValidation) {
+      return true
+    }
+
+    // 2. 尝试恢复会话
+    const sessionToken = localStorage.getItem('sessionToken')
+    if (sessionToken) {
+      try {
+        await AV.User.become(sessionToken)
+      } catch (error) {
+        console.warn('Session restore failed:', error)
+      }
+    }
+
+    // 3. 检查 LeanCloud 用户是否存在
+    const user = AV.User.current()
+    if (!user) {
+      throw new Error('用户会话已失效')
+    }
+
+    // 4. 验证用户会话是否有效
+    try {
+      await user.fetch()
+    } catch (error: any) {
+      if (error.code === 211 || error.code === 209) {
+        throw new Error('用户验证失败')
+      }
+      console.warn('用户验证警告:', error)
+    }
+
+    // 更新验证时间
+    lastValidationTime = now
+    // 更新缓存
+    requestCache.set(cacheKey, { data: true, timestamp: now })
+    return true
+  } catch (error) {
+    clearUserData()
+    if (!isShowingError) {
+      isShowingError = true
+      message.error('登录已失效，请重新登录')
+      router.replace('/login')
+    }
+    throw error
+  } finally {
+    isValidating = false
+  }
+}
+
+// 修改请求拦截器
+const originalRequest = AV.request
+AV.request = async function (...args: any[]) {
+  return new Promise((resolve, reject) => {
+    const request = async () => {
+      try {
+        const result = await originalRequest.apply(AV, args)
+        resolve(result)
+      } catch (error: any) {
+        if (error.code === 429) {
+          // 如果是请求过多，重新加入队列
+          requestQueue.push(request)
+          processQueue()
+        } else {
+          reject(error)
+        }
+      }
+    }
+    requestQueue.push(request)
+    processQueue()
+  })
+}
 
 // 添加类型定义
 interface EndedLeaveRecord {
@@ -35,6 +209,29 @@ const getLocalDate = (timestamp: number | string | null): Date | null => {
 // 成员状态类型
 type MemberStatus = '正常' | '异常' | '催促参训' | '未训退队' | '超时退队' | '违规退队'
 
+// 添加请求限制和重试相关的工具函数
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+// 带重试的请求函数
+async function withRetry<T>(operation: () => Promise<T>, maxRetries = 3, initialDelay = 1000): Promise<T> {
+  let lastError
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await operation()
+    } catch (error: any) {
+      lastError = error
+      if (error.code === 429) { // Too Many Requests
+        const delay = initialDelay * Math.pow(2, i) // 指数退避
+        console.warn(`Rate limited, retrying in ${delay}ms...`)
+        await sleep(delay)
+        continue
+      }
+      throw error // 其他错误直接抛出
+    }
+  }
+  throw lastError
+}
+
 // 成员相关操作
 export const MemberService = {
   // 重新初始化数据表
@@ -45,56 +242,57 @@ export const MemberService = {
 
   // 获取所有成员
   async getAllMembers() {
+    await validateUser()
     await ensureClass('training_members')
-    const query = new AV.Query('training_members')
-    const results = await query.find()
-    const members = results.map(member => member.toJSON())
+    return withRetry(async () => {
+      const query = new AV.Query('training_members')
+      const results = await query.find()
+      const members = results.map(member => member.toJSON())
 
-    // 检查并更新成员状态
-    const now = new Date()
+      // 检查并更新成员状态
+      const now = new Date()
 
-    for (const member of members) {
-      if (member.stage === '未新训' && member.leaveRequest !== '通过') {
-        const joinDate = new Date(member.joinTime)
-        const daysSinceJoin = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
-        
-        // 根据加入时间计算状态
-        const newStatus = daysSinceJoin > 3 ? '未训退队' : '催促参训'
-        
-        // 只有当成员没有通过留队申请时才更新状态
-        if (daysSinceJoin > 3 && member.status !== '未训退队' && member.leaveRequest !== '通过') {
-          // 更新数据库中的状态
-          await this.updateMember(member.objectId, {
-            ...member,
-            status: newStatus
-          })
-
-          // 添加退队记录
-          try {
-            const quitQuery = new AV.Query('quit_members')
-            quitQuery.equalTo('memberId', member.objectId)
-            const quitRecords = await quitQuery.find()
-            
-            if (quitRecords.length === 0) {
-              await QuitService.addQuitRecord({
-                memberId: member.objectId,
-                memberName: member.nickname,
-                memberQQ: member.qq,
-                quitDate: formatDate(now),
-                reason: '未参训',
-                type: '未训退队'
+      for (const member of members) {
+        if (member.stage === '未新训' && member.leaveRequest !== '通过') {
+          const joinDate = new Date(member.joinTime)
+          const daysSinceJoin = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
+          
+          const newStatus = daysSinceJoin > 3 ? '未训退队' : '催促参训'
+          
+          if (daysSinceJoin > 3 && member.status !== '未训退队' && member.leaveRequest !== '通过') {
+            try {
+              await this.updateMember(member.objectId, {
+                ...member,
+                status: newStatus
               })
-            }
-          } catch (e) {
-            console.error('Failed to add quit record:', e)
-          }
 
-          member.status = newStatus
+              // 添加退队记录
+              const quitQuery = new AV.Query('quit_members')
+              quitQuery.equalTo('memberId', member.objectId)
+              const quitRecords = await quitQuery.find()
+              
+              if (quitRecords.length === 0) {
+                await QuitService.addQuitRecord({
+                  memberId: member.objectId,
+                  memberName: member.nickname,
+                  memberQQ: member.qq,
+                  quitDate: formatDate(now),
+                  reason: '未参训',
+                  type: '未训退队'
+                })
+              }
+            } catch (e) {
+              console.warn('Failed to update member status or add quit record:', e)
+              // 继续处理其他成员，不中断整个流程
+            }
+
+            member.status = newStatus
+          }
         }
       }
-    }
 
-    return members
+      return members
+    })
   },
 
   // 获取单个成员
@@ -157,14 +355,16 @@ export const MemberService = {
         }
       }
       
+      // 移除保留字段
+      const { createdAt, updatedAt, objectId, ...cleanedData } = memberData
+
       // 单独处理每个字段
-      for (const [key, value] of Object.entries(memberData)) {
-        if (key !== 'objectId' && key !== 'id') {
+      Object.entries(cleanedData).forEach(([key, value]) => {
+        if (!RESERVED_KEYS.includes(key)) {
           member.set(key, value)
         }
-      }
+      })
 
-      console.log('准备保存的数据:', memberData)
       await member.save()
       return member.toJSON()
     } catch (error) {
@@ -249,6 +449,7 @@ export const MemberService = {
 export const LeaveService = {
   // 获取所有请假记录
   async getAllLeaveRecords() {
+    await validateUser() // 只在获取数据时验证用户状态
     await ensureClass('leave_records')
     const query = new AV.Query('leave_records')
     query.descending('createdAt') // 按创建时间降序排序
@@ -504,67 +705,59 @@ export const BlacklistService = {
 export const QuitService = {
   // 获取所有退队记录
   async getAllQuitRecords() {
+    await validateUser()
     await ensureClass('quit_members')
-    const query = new AV.Query('quit_members')
-    const results = await query.find()
-    return results.map(record => record.toJSON())
+    return withRetry(async () => {
+      const query = new AV.Query('quit_members')
+      query.descending('createdAt')
+      const results = await query.find()
+      return results.map(record => record.toJSON())
+    })
   },
 
   // 添加退队记录
   async addQuitRecord(quitData: any) {
+    await validateUser()
     await ensureClass('quit_members')
-    
-    // 检查是否已存在该成员的退队记录
-    const query = new AV.Query('quit_members')
-    query.equalTo('memberId', quitData.memberId)
-    const existingRecord = await query.first()
-    
-    // 准备数据
-    const data = { 
-      ...quitData,
-      quitType: quitData.quitType || quitData.type || '未知'
-    }
-    
-    // 删除保留字段
-    RESERVED_KEYS.forEach(key => delete data[key])
-    
-    if (existingRecord) {
-      // 如果已存在记录，更新现有记录
-      Object.keys(data).forEach(key => {
-        existingRecord.set(key, data[key])
-      })
-      const result = await existingRecord.save()
-      return result.toJSON()
-    } else {
-      // 如果不存在记录，创建新记录
+    return withRetry(async () => {
       const QuitRecord = AV.Object.extend('quit_members')
       const record = new QuitRecord()
+      
+      const data = { ...quitData }
+      RESERVED_KEYS.forEach(key => delete data[key])
+      Object.keys(data).forEach(key => {
+        record.set(key, data[key])
+      })
+      
+      const result = await record.save()
+      return result.toJSON()
+    })
+  },
+
+  // 更新退队记录
+  async updateQuitRecord(id: string, quitData: any) {
+    await validateUser()
+    await ensureClass('quit_members')
+    return withRetry(async () => {
+      const record = AV.Object.createWithoutData('quit_members', id)
+      const data = { ...quitData }
+      RESERVED_KEYS.forEach(key => delete data[key])
       Object.keys(data).forEach(key => {
         record.set(key, data[key])
       })
       const result = await record.save()
       return result.toJSON()
-    }
+    })
   },
 
   // 删除退队记录
   async deleteQuitRecord(id: string) {
+    await validateUser()
     await ensureClass('quit_members')
-    const record = AV.Object.createWithoutData('quit_members', id)
-    await record.destroy()
-  },
-
-  // 更新退队记录
-  async updateQuitRecord(id: string, quitData: any) {
-    await ensureClass('quit_members')
-    const record = AV.Object.createWithoutData('quit_members', id)
-    const data = { ...quitData }
-    RESERVED_KEYS.forEach(key => delete data[key])
-    Object.keys(data).forEach(key => {
-      record.set(key, data[key])
+    return withRetry(async () => {
+      const record = AV.Object.createWithoutData('quit_members', id)
+      await record.destroy()
     })
-    const result = await record.save()
-    return result.toJSON()
   }
 }
 

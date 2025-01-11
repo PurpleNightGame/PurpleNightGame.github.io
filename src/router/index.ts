@@ -135,21 +135,35 @@ router.beforeEach(async (to, from, next) => {
     const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)
     
     // 检查本地存储的登录状态
-    const remembered = localStorage.getItem('rememberLogin')
+    const remembered = localStorage.getItem('rememberLogin') === 'true'
     const sessionToken = localStorage.getItem('sessionToken')
     
     if (requiresAuth) {
       // 检查用户是否已登录
       const isAuthenticated = authService.isAuthenticated()
       if (!isAuthenticated || !sessionToken) {
-        // 如果没有记住登录或会话无效，清除所有存储的登录信息
-        if (remembered !== 'true' || !sessionToken) {
-          localStorage.removeItem('rememberLogin')
-          localStorage.removeItem('username')
-          localStorage.removeItem('userRole')
-          localStorage.removeItem('sessionToken')
-          localStorage.removeItem('userId')
+        // 如果没有记住登录，才清除数据
+        if (!remembered) {
+          clearUserData()
         }
+        next({ name: 'login' })
+        return
+      }
+
+      // 实时检查用户是否有效
+      try {
+        const currentUser = await authService.getCurrentUser()
+        if (!currentUser) {
+          message.error('登录已失效，请重新登录')
+          // 即使是记住登录，当用户无效时也要清除数据
+          clearUserData()
+          next({ name: 'login' })
+          return
+        }
+      } catch (error) {
+        message.error('用户验证失败，请重新登录')
+        // 发生错误时也要清除数据
+        clearUserData()
         next({ name: 'login' })
         return
       }
@@ -175,14 +189,14 @@ router.beforeEach(async (to, from, next) => {
   } catch (error) {
     console.error('路由守卫错误:', error)
     message.error('系统错误，请重新登录')
-    // 发生错误时清除所有登录信息
-    localStorage.removeItem('rememberLogin')
-    localStorage.removeItem('username')
-    localStorage.removeItem('userRole')
-    localStorage.removeItem('sessionToken')
-    localStorage.removeItem('userId')
+    clearUserData()
     next({ name: 'login' })
   }
 })
+
+// 清除用户数据的辅助函数
+const clearUserData = () => {
+  localStorage.clear() // 清除所有本地存储数据
+}
 
 export default router 

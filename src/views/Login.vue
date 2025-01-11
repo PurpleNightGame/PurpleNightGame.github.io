@@ -1,50 +1,104 @@
 <template>
   <div class="login-container">
-    <div class="login-box">
-      <div class="logo-container">
-        <img src="https://s21.ax1x.com/2024/12/08/pA72i5R.png" alt="系统Logo" class="logo" />
-      </div>
-      <h2>成员管理系统</h2>
-      <div class="input-group">
-        <input 
-          v-model="username" 
-          type="text" 
-          placeholder="用户名"
-          @keyup.enter="handleLogin"
-        />
-      </div>
-      <div class="input-group password-group">
-        <input 
-          v-model="password" 
-          :type="showPassword ? 'text' : 'password'" 
-          placeholder="密码"
-          @keyup.enter="handleLogin"
-        />
-        <button 
-          type="button" 
-          class="toggle-password"
-          @click="showPassword = !showPassword"
-          :title="showPassword ? '隐藏密码' : '显示密码'"
-        >
-          {{ showPassword ? '👁️' : '👁️‍🗨️' }}
-        </button>
-      </div>
-      <div class="remember-login">
-        <label class="checkbox-label">
-          <div class="custom-checkbox">
-            <input 
-              type="checkbox" 
-              v-model="rememberLogin"
-            />
-            <span class="checkmark"></span>
+    <div class="login-wrapper">
+      <!-- 左侧品牌区域 -->
+      <div class="brand-section">
+        <div class="brand-overlay"></div>
+        <div class="brand-content">
+          <div class="brand-text">
+            <h1 class="brand-title">紫 夜 公 会</h1>
+            <div class="title-decoration"></div>
+            <p class="brand-subtitle">Guild Member Management</p>
           </div>
-          <span class="label-text">记住登录状态</span>
-        </label>
+          <div class="decoration-circles">
+            <div class="circle circle-1"></div>
+            <div class="circle circle-2"></div>
+            <div class="circle circle-3"></div>
+          </div>
+        </div>
       </div>
-      <button @click="handleLogin" :disabled="loading">
-        {{ loading ? '登录中...' : '登录' }}
-      </button>
-      <p v-if="error" class="error-message">{{ error }}</p>
+
+      <!-- 右侧登录区域 -->
+      <div class="login-section">
+        <div class="login-box">
+          <div class="login-header">
+            <h2>欢 迎 回 来</h2>
+            <p class="login-subtitle">登录您的账号以继续</p>
+          </div>
+
+          <form class="login-form" @submit.prevent="handleLogin">
+            <div class="input-group">
+              <label>
+                <span class="label-text">用户名</span>
+                <div class="input-wrapper">
+                  <input 
+                    v-model="username" 
+                    type="text" 
+                    placeholder="请输入用户名"
+                    @keyup.enter="handleLogin"
+                  />
+                  <span class="input-focus-border"></span>
+                </div>
+              </label>
+            </div>
+
+            <div class="input-group">
+              <label>
+                <span class="label-text">密码</span>
+                <div class="input-wrapper">
+                  <input 
+                    v-model="password" 
+                    :type="showPassword ? 'text' : 'password'" 
+                    placeholder="请输入密码"
+                    @keyup.enter="handleLogin"
+                  />
+                  <button 
+                    type="button" 
+                    class="toggle-password"
+                    @click="showPassword = !showPassword"
+                  >
+                    <svg v-if="showPassword" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                      <line x1="1" y1="1" x2="23" y2="23"></line>
+                    </svg>
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                  <span class="input-focus-border"></span>
+                </div>
+              </label>
+            </div>
+
+            <div class="form-footer">
+              <label class="remember-me">
+                <input 
+                  type="checkbox" 
+                  v-model="rememberLogin"
+                />
+                <span class="checkmark"></span>
+                <span>记住登录</span>
+              </label>
+            </div>
+
+            <button 
+              type="submit"
+              class="login-button" 
+              :class="{ 'loading': loading }"
+              :disabled="loading"
+            >
+              <span class="button-content">
+                {{ loading ? '登录中...' : '登 录' }}
+              </span>
+            </button>
+
+            <div v-if="error" class="error-container">
+              <p class="error-message">{{ error }}</p>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -74,17 +128,13 @@ const handleLogin = async () => {
   try {
     loading.value = true
     error.value = ''
-    console.log('尝试登录:', username.value)
     const user = await authService.login(username.value, password.value)
-    console.log('登录成功:', user)
     message.success('登录成功')
     
-    // 总是保存会话令牌和用户ID，因为这些是必需的
     localStorage.setItem('sessionToken', user.sessionToken)
     localStorage.setItem('userId', user.id)
     localStorage.setItem('userRole', user.role)
     
-    // 只有在选择了记住登录状态时才保存额外的信息
     if (rememberLogin.value) {
       localStorage.setItem('rememberLogin', 'true')
       localStorage.setItem('username', username.value)
@@ -93,21 +143,29 @@ const handleLogin = async () => {
       localStorage.removeItem('username')
     }
     
-    // 根据用户角色重定向
     if (user.role === 'admin') {
       await router.push('/hr')
     } else {
       await router.push('/training')
     }
-  } catch (error: any) {
-    console.error('登录错误:', error)
-    message.error('登录失败: ' + error.message)
+  } catch (err: any) {
+    console.error('登录错误:', err)
+    if (err.message.includes('Could not find user')) {
+      error.value = '用户名或密码错误'
+    } else if (err.message.includes('Invalid username/password')) {
+      error.value = '用户名或密码错误'
+    } else if (err.message.includes('Request timeout')) {
+      error.value = '网络请求超时，请稍后重试'
+    } else if (err.message.includes('Network error')) {
+      error.value = '网络连接错误，请检查网络设置'
+    } else {
+      error.value = '登录失败，请稍后重试'
+    }
   } finally {
     loading.value = false
   }
 }
 
-// 在组件挂载时检查是否有保存的登录状态
 onMounted(async () => {
   const remembered = localStorage.getItem('rememberLogin')
   const savedUsername = localStorage.getItem('username')
@@ -117,12 +175,10 @@ onMounted(async () => {
 
   if (remembered === 'true' && savedUsername && sessionToken && userRole && userId) {
     try {
-      // 验证保存的会话是否有效
       const user = await authService.validateSession(sessionToken)
       if (user) {
         username.value = savedUsername
         rememberLogin.value = true
-        // 自动重定向到相应页面
         if (userRole === 'admin') {
           await router.push('/hr')
         } else {
@@ -130,7 +186,6 @@ onMounted(async () => {
         }
       }
     } catch (error) {
-      // 如果会话无效，清除所有存储的登录信息
       localStorage.removeItem('rememberLogin')
       localStorage.removeItem('username')
       localStorage.removeItem('userRole')
@@ -141,153 +196,228 @@ onMounted(async () => {
 })
 </script>
 
-<style>
-/* 全局 CSS 变量 */
-:root {
-  --primary-color: #6B46C1;
-  --primary-light: #805AD5;
-  --primary-dark: #553C9A;
-  --background-start: #F3E8FF;
-  --background-end: #E9D8FD;
-  --border-color: #D6BCFA;
-  --text-color: #2D3748;
-  --placeholder-color: #A0AEC0;
-  --error-color: #E53E3E;
-  --shadow-color: rgba(107, 70, 193, 0.15);
-  --focus-shadow-color: rgba(107, 70, 193, 0.2);
-  --box-background: rgba(255, 255, 255, 0.95);
-}
-</style>
-
 <style scoped>
 .login-container {
-  height: 100vh;
+  min-height: 100vh;
+  background: url('https://s21.ax1x.com/2024/07/04/pk2OYyq.png') center/cover fixed;
   display: flex;
-  justify-content: center;
   align-items: center;
-  background: linear-gradient(135deg, #9C27B0, #673AB7);
-  animation: gradientBG 15s ease infinite;
-  background-size: 400% 400%;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
 }
 
-@keyframes gradientBG {
-  0% { background-position: 0% 50% }
-  50% { background-position: 100% 50% }
-  100% { background-position: 0% 50% }
+.login-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+}
+
+.login-wrapper {
+  width: 100%;
+  max-width: 1200px;
+  min-height: 600px;
+  display: flex;
+  border-radius: 30px;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 左侧品牌区域 */
+.brand-section {
+  flex: 1;
+  background: rgba(121, 40, 202, 0.3);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.brand-overlay {
+  display: none;
+}
+
+.brand-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+.brand-text {
+  text-align: left;
+  color: white;
+  position: relative;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.brand-title {
+  font-size: 4rem;
+  font-weight: 800;
+  margin: 0;
+  line-height: 1.2;
+  color: white;
+  -webkit-text-fill-color: white;
+  background: none;
+  position: relative;
+}
+
+.title-decoration {
+  width: 100px;
+  height: 4px;
+  background: white;
+  margin: 20px 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.title-decoration::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: rgba(255,255,255,0.3);
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  100% { transform: translateX(200%); }
+}
+
+.brand-subtitle {
+  font-size: 1.2rem;
+  opacity: 0.9;
+  margin: 0;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.decoration-circles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.circle {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+}
+
+.circle-1 {
+  width: 300px;
+  height: 300px;
+  top: -150px;
+  right: -150px;
+  animation: float 8s ease-in-out infinite;
+}
+
+.circle-2 {
+  width: 200px;
+  height: 200px;
+  bottom: 50px;
+  left: -100px;
+  animation: float 12s ease-in-out infinite;
+}
+
+.circle-3 {
+  width: 150px;
+  height: 150px;
+  bottom: -75px;
+  right: 50px;
+  animation: float 10s ease-in-out infinite reverse;
+}
+
+@keyframes float {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(20px, -20px); }
+}
+
+/* 右侧登录区域 */
+.login-section {
+  width: 480px;
+  background: rgba(255, 255, 255, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px;
+  backdrop-filter: blur(10px);
 }
 
 .login-box {
-  background: var(--box-background);
-  padding: 2.5rem;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   width: 100%;
-  max-width: 400px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(8px);
 }
 
-.logo-container {
+.login-header {
+  margin-bottom: 40px;
   text-align: center;
-  margin-bottom: 2rem;
+}
+
+.login-header h2 {
+  font-size: 2rem;
+  color: #1a1a1a;
+  margin: 0;
+  font-weight: 700;
+}
+
+.login-subtitle {
+  color: #666;
+  margin-top: 8px;
+  font-size: 1rem;
+}
+
+.login-form {
   width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.logo {
-  width: 180px;
-  height: 180px;
-  object-fit: cover;
-  display: block;
-  border-radius: 50%;
-  border: 4px solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 4px 20px rgba(107, 70, 193, 0.2);
-  background-color: white;
-  padding: 8px;
-}
-
-h2 {
-  text-align: center;
-  margin-bottom: 2rem;
-  color: var(--primary-dark);
-  font-weight: 600;
-  font-size: 1.75rem;
 }
 
 .input-group {
-  margin-bottom: 1.2rem;
+  margin-bottom: 24px;
 }
 
-input {
-  width: 100%;
-  padding: 1rem;
-  border: 2px solid var(--border-color);
-  border-radius: 12px;
-  font-size: 1rem;
-  transition: all 0.3s ease;
-  color: var(--text-color);
-  background-color: rgba(255, 255, 255, 0.9);
-}
-
-input:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px var(--focus-shadow-color);
-  background-color: white;
-}
-
-input::placeholder {
-  color: var(--placeholder-color);
-}
-
-button {
-  width: 100%;
-  padding: 1rem;
-  background: linear-gradient(to right, #9C27B0, #673AB7);
-  color: white;
-  border: none;
-  border-radius: 12px;
-  font-size: 1.1rem;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  font-weight: 600;
-  position: relative;
-  overflow: hidden;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-button:hover:not(:disabled) {
-  background: linear-gradient(to right, #673AB7, #9C27B0);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 15px rgba(156, 39, 176, 0.3);
-}
-
-button:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(156, 39, 176, 0.2);
-}
-
-button:disabled {
-  background: #B39DDB;
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-.error-message {
-  color: var(--error-color);
-  text-align: center;
-  margin-top: 1rem;
-  font-size: 0.9rem;
+.label-text {
+  display: block;
+  margin-bottom: 8px;
+  color: #1a1a1a;
   font-weight: 500;
-  background: rgba(229, 62, 62, 0.1);
-  padding: 0.5rem;
-  border-radius: 8px;
+  font-size: 0.9rem;
 }
 
-.password-group {
+.input-wrapper {
   position: relative;
+}
+
+.input-wrapper input {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 1rem;
+  border: 2px solid #eee;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  transition: all 0.3s ease;
+}
+
+.input-wrapper input:focus {
+  outline: none;
+  border-color: #7928CA;
+  background: white;
+  box-shadow: 0 0 0 4px rgba(121, 40, 202, 0.1);
 }
 
 .toggle-password {
@@ -297,89 +427,72 @@ button:disabled {
   transform: translateY(-50%);
   background: none;
   border: none;
-  padding: 4px;
   cursor: pointer;
-  color: var(--placeholder-color);
-  font-size: 1.2rem;
+  padding: 0;
+  color: #999;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.3s ease;
-  width: auto;
+  transition: all 0.3s;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
 }
 
 .toggle-password:hover {
-  color: var(--primary-color);
-  background: none;
-  transform: translateY(-50%);
-  box-shadow: none;
+  color: #7928CA;
+  background: rgba(121, 40, 202, 0.1);
 }
 
-.toggle-password:active {
-  transform: translateY(-50%);
-  box-shadow: none;
+.toggle-password svg {
+  transition: all 0.3s;
 }
 
-/* 调整密码输入框的内边距，为按钮留出空间 */
-.password-group input {
-  padding-right: 3rem;
+.toggle-password:active svg {
+  transform: scale(0.9);
 }
 
-.remember-login {
-  margin-bottom: 1.2rem;
+.form-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding: 0 4px;
+  justify-content: space-between;
+  margin-bottom: 24px;
 }
 
-.checkbox-label {
+.remember-me {
   display: flex;
   align-items: center;
   cursor: pointer;
   user-select: none;
-  font-size: 0.9rem;
-  color: var(--text-color);
-  transition: all 0.3s ease;
 }
 
-.custom-checkbox {
-  position: relative;
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  margin-right: 8px;
-}
-
-.custom-checkbox input {
+.remember-me input {
   position: absolute;
   opacity: 0;
-  cursor: pointer;
-  height: 0;
-  width: 0;
 }
 
 .checkmark {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 18px;
   width: 18px;
-  background-color: white;
-  border: 2px solid var(--border-color);
+  height: 18px;
+  border: 2px solid #ddd;
   border-radius: 4px;
-  transition: all 0.2s ease;
+  margin-right: 8px;
+  position: relative;
+  transition: all 0.2s;
 }
 
-.custom-checkbox input:checked ~ .checkmark {
-  background-color: #9C27B0;
-  border-color: #9C27B0;
+.remember-me:hover .checkmark {
+  border-color: #7928CA;
 }
 
-.checkmark:after {
-  content: "";
+.remember-me input:checked ~ .checkmark {
+  background: #7928CA;
+  border-color: #7928CA;
+}
+
+.remember-me input:checked ~ .checkmark:after {
+  content: '';
   position: absolute;
-  display: none;
   left: 4px;
   top: 1px;
   width: 4px;
@@ -389,22 +502,288 @@ button:disabled {
   transform: rotate(45deg);
 }
 
-.custom-checkbox input:checked ~ .checkmark:after {
-  display: block;
+.login-button {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(121, 40, 202, 0.9), rgba(255, 0, 128, 0.9));
+  backdrop-filter: blur(5px);
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
 }
 
-.checkbox-label:hover .checkmark {
-  border-color: #9C27B0;
-  box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.1);
+.login-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    120deg,
+    transparent,
+    rgba(255,255,255,0.2),
+    transparent
+  );
+  transition: 0.5s;
 }
 
-.label-text {
-  color: var(--text-color);
-  font-weight: 500;
-  transition: color 0.3s ease;
+.login-button:hover::before {
+  left: 100%;
 }
 
-.checkbox-label:hover .label-text {
-  color: #9C27B0;
+.login-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(121,40,202,0.3);
+}
+
+.login-button:active {
+  transform: translateY(0);
+}
+
+.login-button.loading {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.error-container {
+  margin-top: 24px;
+  padding: 12px;
+  background: rgba(255,59,48,0.08);
+  border-radius: 8px;
+  text-align: center;
+  border: 1px solid rgba(255,59,48,0.2);
+}
+
+.error-message {
+  color: #ff3b30;
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 1024px) {
+  .login-wrapper {
+    max-width: 900px;
+  }
+  
+  .brand-section {
+    padding: 40px;
+  }
+  
+  .brand-title {
+    font-size: 3rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .login-container {
+    padding: 0;
+    background-attachment: scroll;
+    min-height: 100vh;
+  }
+
+  .login-container::before {
+    backdrop-filter: blur(5px);
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .login-wrapper {
+    flex-direction: column;
+    min-height: 100vh;
+    max-height: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    border: none;
+  }
+  
+  .brand-section {
+    flex: none;
+    height: 35vh;
+    min-height: 280px;
+    padding: 20px;
+    background: rgba(121, 40, 202, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .brand-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .brand-text {
+    text-align: center;
+  }
+  
+  .brand-title {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+  }
+  
+  .title-decoration {
+    margin: 15px auto;
+    width: 60px;
+    height: 3px;
+  }
+  
+  .brand-subtitle {
+    font-size: 1rem;
+  }
+
+  .decoration-circles {
+    display: none;
+  }
+  
+  .login-section {
+    flex: 1;
+    width: 100%;
+    padding: 30px 20px;
+    background: rgba(255, 255, 255, 0.98);
+    display: flex;
+    align-items: flex-start;
+    border-radius: 30px 30px 0 0;
+    margin-top: -30px;
+  }
+  
+  .login-box {
+    max-width: 400px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .login-header {
+    margin-bottom: 30px;
+  }
+
+  .login-header h2 {
+    font-size: 1.8rem;
+  }
+
+  .login-subtitle {
+    font-size: 0.9rem;
+  }
+
+  .input-group {
+    margin-bottom: 20px;
+  }
+
+  .input-wrapper input {
+    padding: 12px 14px;
+    font-size: 0.95rem;
+  }
+
+  .label-text {
+    font-size: 0.85rem;
+  }
+
+  .form-footer {
+    margin-bottom: 20px;
+  }
+
+  .login-button {
+    padding: 12px;
+    font-size: 0.95rem;
+    border-radius: 10px;
+  }
+
+  .error-container {
+    margin-top: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-container {
+    background-position: center;
+  }
+
+  .brand-section {
+    height: 30vh;
+    min-height: 220px;
+    padding: 15px;
+  }
+  
+  .brand-title {
+    font-size: 2rem;
+  }
+  
+  .login-section {
+    padding: 25px 15px;
+  }
+
+  .login-header h2 {
+    font-size: 1.6rem;
+  }
+
+  .input-wrapper input {
+    padding: 10px 12px;
+    font-size: 0.9rem;
+  }
+
+  .remember-me span {
+    font-size: 0.85rem;
+  }
+
+  .checkmark {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+@media (max-height: 667px) {
+  .brand-section {
+    height: auto;
+    padding: 30px 20px;
+  }
+
+  .brand-title {
+    font-size: 1.8rem;
+  }
+
+  .title-decoration {
+    margin: 10px auto;
+  }
+
+  .login-section {
+    padding-top: 20px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 480px) {
+  .login-wrapper {
+    flex-direction: row;
+  }
+
+  .brand-section {
+    width: 35%;
+    height: 100vh;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: none;
+  }
+
+  .login-section {
+    width: 65%;
+    margin-top: 0;
+    border-radius: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .login-box {
+    padding: 20px 0;
+  }
 }
 </style> 

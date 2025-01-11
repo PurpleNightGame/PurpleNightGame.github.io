@@ -82,7 +82,26 @@
       require-mark-placement="right-hanging"
     >
       <n-form-item label="考核地图" path="assessmentMap">
+        <n-space vertical v-if="showCustomMapInput">
+          <n-input
+            v-model:value="customMapValue"
+            placeholder="请输入地图名称"
+          />
+          <n-button
+            text
+            type="primary"
+            size="tiny"
+            @click="() => {
+              showCustomMapInput = false;
+              formValue.assessmentMap = '';
+              customMapValue = '';
+            }"
+          >
+            返回选择预设地图
+          </n-button>
+        </n-space>
         <n-select
+          v-else
           v-model:value="formValue.assessmentMap"
           :options="mapOptions"
           placeholder="请选择考核地图"
@@ -138,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref, computed, onMounted, onUnmounted } from 'vue'
+import { h, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { 
   NButton, 
   NSpace, 
@@ -337,7 +356,8 @@ const mapOptions = [
   { label: '213公寓', value: '213公寓' },
   { label: '海滨公寓', value: '海滨公寓' },
   { label: '大学', value: '大学' },
-  { label: '医院', value: '医院' }
+  { label: '医院', value: '医院' },
+  { label: '自定义', value: 'custom' }
 ]
 
 // 考核状态选项
@@ -458,8 +478,14 @@ const formValue = ref({
 const rules = {
   assessmentMap: {
     required: true,
-    message: '请选择考核地图',
-    trigger: ['blur', 'change']
+    message: '请选择或输入考核地图',
+    trigger: ['blur', 'change'],
+    validator: (rule: any, value: string) => {
+      if (showCustomMapInput) {
+        return !!customMapValue
+      }
+      return !!value && value !== 'custom'
+    }
   },
   assessmentStatus: {
     required: true,
@@ -488,17 +514,89 @@ const rules = {
   }
 }
 
+// 添加自定义地图输入控制
+const showCustomMapInput = ref(false)
+const customMapValue = ref('')
+
+// 添加自动更新功能
+let updateTimer: number | null = null
+
+const startAutoUpdate = () => {
+  updateTimer = window.setInterval(async () => {
+    tableData.value = await loadFromStorage()
+  }, 60000) // 每分钟更新一次
+}
+
+// 组件挂载和卸载
+onMounted(async () => {
+  try {
+    loading.value = true
+    // 立即执行一次加载，确保状态同步
+    tableData.value = await loadFromStorage()
+    startAutoUpdate() // 启动自动更新
+  } catch (e) {
+    console.error('Failed to load initial data:', e)
+    message.error('初始数据加载失败')
+  } finally {
+    loading.value = false
+  }
+})
+
+onUnmounted(() => {
+  if (updateTimer) {
+    clearInterval(updateTimer)
+    updateTimer = null
+  }
+})
+
+// 监听地图选择变化
+watch(() => formValue.value.assessmentMap, (newValue) => {
+  if (newValue === 'custom') {
+    showCustomMapInput.value = true
+    customMapValue.value = ''
+  } else if (newValue === '') {
+    showCustomMapInput.value = false
+    customMapValue.value = ''
+  }
+}, { immediate: true })
+
+// 监听自定义地图输入
+watch(customMapValue, (newValue) => {
+  if (showCustomMapInput.value) {
+    formValue.value.assessmentMap = newValue || ''
+  }
+})
+
 // 处理编辑
 const handleEdit = (row: AssessmentMember) => {
   editingId.value = row.id
   const passDate = row.passDate ? new Date(row.passDate).getTime() : null
 
-  formValue.value = {
-    assessmentMap: row.assessmentMap || '',
-    assessmentStatus: row.assessmentStatus || '未通过',
-    passDate,
-    score: row.score || 0,
-    comment: row.comment || ''
+  // 检查是否是预设地图
+  const isPresetMap = mapOptions.some(option => 
+    option.value !== 'custom' && option.value === row.assessmentMap
+  )
+
+  if (!isPresetMap && row.assessmentMap) {
+    showCustomMapInput.value = true
+    customMapValue.value = row.assessmentMap
+    formValue.value = {
+      assessmentMap: row.assessmentMap,
+      assessmentStatus: row.assessmentStatus || '未通过',
+      passDate,
+      score: row.score || 0,
+      comment: row.comment || ''
+    }
+  } else {
+    showCustomMapInput.value = false
+    customMapValue.value = ''
+    formValue.value = {
+      assessmentMap: row.assessmentMap || '',
+      assessmentStatus: row.assessmentStatus || '未通过',
+      passDate,
+      score: row.score || 0,
+      comment: row.comment || ''
+    }
   }
   showModal.value = true
 }
@@ -520,10 +618,19 @@ const handleSubmit = async (e: MouseEvent) => {
         try {
           loading.value = true
 
+          // 获取最终的地图名称
+          const finalMap = showCustomMapInput.value ? customMapValue.value : formValue.value.assessmentMap
+
+          // 验证地图名称
+          if (!finalMap) {
+            message.error('请输入或选择考核地图')
+            return
+          }
+
           // 更新成员数据
           const updatedMember = {
             ...tableData.value[index],
-            assessmentMap: formValue.value.assessmentMap,
+            assessmentMap: finalMap,
             assessmentStatus: formValue.value.assessmentStatus,
             passDate,
             score: formValue.value.score,
@@ -538,6 +645,11 @@ const handleSubmit = async (e: MouseEvent) => {
           
           message.success('更新成功')
           showModal.value = false
+          
+          // 重置自定义地图相关状态
+          showCustomMapInput.value = false
+          customMapValue.value = ''
+          formValue.value.assessmentMap = ''
         } catch (e) {
           console.error('Failed to update assessment:', e)
           message.error('更新失败')
@@ -548,37 +660,6 @@ const handleSubmit = async (e: MouseEvent) => {
     }
   })
 }
-
-// 添加自动更新功能
-let updateTimer: number | null = null
-
-const startAutoUpdate = () => {
-  updateTimer = window.setInterval(async () => {
-    tableData.value = await loadFromStorage()
-  }, 60000) // 每分钟更新一次
-}
-
-// 组件挂载时启动定时更新
-onMounted(async () => {
-  try {
-    loading.value = true
-    // 立即执行一次加载，确保状态同步
-    tableData.value = await loadFromStorage()
-  } catch (e) {
-    console.error('Failed to load initial data:', e)
-    message.error('初始数据加载失败')
-  } finally {
-    loading.value = false
-  }
-  startAutoUpdate()
-})
-
-// 组件卸载时清除定时器
-onUnmounted(() => {
-  if (updateTimer) {
-    clearInterval(updateTimer)
-  }
-})
 </script>
 
 <style scoped>

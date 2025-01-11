@@ -4,6 +4,7 @@ import router from './router'
 import { createPinia } from 'pinia'
 import naive from 'naive-ui'
 import { initializeTables } from './utils/leancloud-init'
+import './utils/request-interceptor' // 导入请求拦截器
 
 // 初始化数据表
 initializeTables().then(() => {

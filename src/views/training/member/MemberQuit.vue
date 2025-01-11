@@ -27,6 +27,19 @@
           ]"
           style="width: 120px"
         />
+        <n-space v-if="checkedRowKeys.length > 0">
+          <n-button
+            type="error"
+            @click="handleBatchConfirmQuit"
+          >
+            批量退队
+          </n-button>
+          <n-button
+            @click="handleBatchCancelQuit"
+          >
+            批量取消
+          </n-button>
+        </n-space>
       </n-space>
 
       <n-data-table
@@ -36,6 +49,8 @@
         :loading="loading"
         @update:page="handlePageChange"
         @update:page-size="handlePageSizeChange"
+        @update:checked-row-keys="handleCheckedRowKeysChange"
+        :row-key="(row) => row.id"
       />
     </n-space>
   </n-card>
@@ -56,7 +71,7 @@ import {
   NIcon
 } from 'naive-ui'
 import { CheckmarkCircleOutline, CloseCircleOutline, SearchOutline } from '@vicons/ionicons5'
-import { MemberService, QuitService, BlacklistService, LeaveService } from '../../../utils/leancloud-service'
+import { MemberService, QuitService, BlacklistService, LeaveService, BlacklistQuitService } from '../../../utils/leancloud-service'
 import { calculateMemberStatus } from '../../../utils/memberStatus'
 
 // 创建消息实例
@@ -91,10 +106,19 @@ const loadQuitMembers = async (): Promise<QuitMember[]> => {
       return dateB - dateA
     })
     
-    // 只保留每个成员的最新退队记录
+    // 遍历所有退队记录
     quitRecords.forEach(record => {
-      if (!memberQuitMap.has(record.memberId)) {
+      const existingRecord = memberQuitMap.get(record.memberId)
+      if (!existingRecord) {
+        // 如果不存在记录，直接添加
         memberQuitMap.set(record.memberId, record)
+      } else {
+        // 如果存在记录，比较时间，保留最新的
+        const existingDate = existingRecord.createdAt ? new Date(existingRecord.createdAt).getTime() : 0
+        const currentDate = record.createdAt ? new Date(record.createdAt).getTime() : 0
+        if (currentDate > existingDate) {
+          memberQuitMap.set(record.memberId, record)
+        }
       }
     })
     
@@ -117,12 +141,18 @@ const loadQuitMembers = async (): Promise<QuitMember[]> => {
           console.error('Error formatting date:', e)
         }
         
+        // 返回格式化的数据
         return {
-          ...member,
           id: member.objectId,
+          nickname: member.nickname,
+          qq: member.qq,
+          gameId: member.gameId || '',
           joinTime: formattedJoinTime,
+          stage: member.stage,
+          status: member.status,
           quitReason: record.quitType,
-          quitRecordId: record.objectId
+          quitRecordId: record.objectId,
+          createdAt: record.createdAt
         }
       })
       .filter(Boolean) as QuitMember[]
@@ -196,6 +226,12 @@ const handleFinalConfirmQuit = async (row: QuitMember) => {
   try {
     loading.value = true
     
+    // 删除成员记录前先获取完整的成员数据
+    const member = await MemberService.getMember(row.id)
+    if (!member) {
+      throw new Error('Member not found')
+    }
+
     // 删除成员记录
     await MemberService.deleteMember(row.id)
     
@@ -229,6 +265,12 @@ const handleFinalConfirmQuit = async (row: QuitMember) => {
 // 处理确认退队
 const handleConfirmQuit = async (row: QuitMember) => {
   try {
+    // 如果是违规退队，直接执行退队操作
+    if (row.quitReason === '违规退队') {
+      await handleFinalConfirmQuit(row)
+      return
+    }
+
     // 获取成员当前状态
     const [members, leaveRecords, blacklistRecords] = await Promise.all([
       MemberService.getAllMembers(),
@@ -247,7 +289,7 @@ const handleConfirmQuit = async (row: QuitMember) => {
     
     // 检查是否为退队状态
     const quitStatuses = ['未训退队', '超时退队', '违规退队']
-    if (!quitStatuses.includes(currentStatus)) {
+    if (!quitStatuses.includes(currentStatus) && row.quitReason !== currentStatus) {
       dialog.warning({
         title: '警告',
         content: `该成员当前状态为"${currentStatus}"，不符合退队条件，确定要执行退队操作吗？`,
@@ -280,6 +322,20 @@ const handleCancelQuit = async (row: QuitMember) => {
     
     // 更新成员状态
     if (row.id) {
+      // 获取当前成员的完整信息和相关记录
+      const [member, leaveRecords, blacklistRecords] = await Promise.all([
+        MemberService.getMember(row.id),
+        LeaveService.getAllLeaveRecords(),
+        BlacklistService.getAllBlacklistRecords()
+      ])
+
+      if (!member) {
+        throw new Error('Member not found')
+      }
+
+      // 重新计算成员状态
+      const currentStatus = calculateMemberStatus(member, blacklistRecords, leaveRecords)
+
       // 格式化日期
       let formattedJoinTime = row.joinTime
       try {
@@ -293,13 +349,17 @@ const handleCancelQuit = async (row: QuitMember) => {
         console.error('Error formatting date:', e)
       }
 
+      // 只包含需要更新的字段
       const memberData = {
         nickname: row.nickname,
         qq: row.qq,
         gameId: row.gameId || '',
         joinTime: formattedJoinTime,
         stage: row.stage,
-        status: '正常'
+        status: currentStatus, // 使用重新计算的状态
+        onLeave: false,
+        leaveRequest: '未申请',
+        lastTrainingDate: member.lastTrainingDate
       }
       await MemberService.updateMember(row.id, memberData)
     }
@@ -321,8 +381,203 @@ const getQuitReasonType = (reason: string) => {
   return 'error'
 }
 
+// 添加选中行的状态
+const checkedRowKeys = ref<string[]>([])
+
+// 处理选中行变化
+const handleCheckedRowKeysChange = (keys: string[]) => {
+  checkedRowKeys.value = keys.length > 0 ? [...keys] : []
+}
+
+// 处理批量确认退队
+const handleBatchConfirmQuit = async () => {
+  try {
+    // 先检查所有选中成员的状态
+    const [members, leaveRecords, blacklistRecords] = await Promise.all([
+      MemberService.getAllMembers(),
+      LeaveService.getAllLeaveRecords(),
+      BlacklistService.getAllBlacklistRecords()
+    ])
+
+    const failedMembers: { nickname: string; status: string }[] = []
+    const successMembers: QuitMember[] = []
+
+    // 检查每个选中成员的状态
+    for (const id of checkedRowKeys.value) {
+      const quitMember = tableData.value.find(m => m.id === id)
+      const member = members.find(m => m.objectId === id)
+      
+      if (quitMember && member) {
+        // 如果是违规退队，直接加入成功列表
+        if (quitMember.quitReason === '违规退队') {
+          successMembers.push(quitMember)
+          continue
+        }
+
+        const currentStatus = calculateMemberStatus(member, blacklistRecords, leaveRecords)
+        const quitStatuses = ['未训退队', '超时退队', '违规退队']
+        
+        if (!quitStatuses.includes(currentStatus) && quitMember.quitReason !== currentStatus) {
+          failedMembers.push({
+            nickname: quitMember.nickname,
+            status: currentStatus
+          })
+        } else {
+          successMembers.push(quitMember)
+        }
+      }
+    }
+
+    // 如果有不符合条件的成员，显示确认对话框
+    if (failedMembers.length > 0) {
+      const failedMessage = failedMembers
+        .map(m => `${m.nickname}(状态: ${m.status})`)
+        .join('、')
+
+      dialog.warning({
+        title: '部分成员状态异常',
+        content: `以下成员因状态不符无法退队：${failedMessage}。\n是否继续处理其他 ${successMembers.length} 名成员的退队？`,
+        positiveText: '继续处理',
+        negativeText: '取消',
+        onPositiveClick: async () => {
+          await processBatchQuit(successMembers)
+        },
+        onNegativeClick: () => {
+          // 取消操作时清空选中状态
+          checkedRowKeys.value = []
+        }
+      })
+    } else {
+      // 如果所有成员都符合条件，直接处理
+      dialog.warning({
+        title: '警告',
+        content: `确定要将选中的 ${successMembers.length} 名成员退队吗？`,
+        positiveText: '确定',
+        negativeText: '取消',
+        onPositiveClick: async () => {
+          await processBatchQuit(successMembers)
+        },
+        onNegativeClick: () => {
+          // 取消操作时清空选中状态
+          checkedRowKeys.value = []
+        }
+      })
+    }
+  } catch (e) {
+    console.error('Failed to check member status:', e)
+    message.error('检查成员状态失败，请重试')
+    // 发生错误时也清空选中状态
+    checkedRowKeys.value = []
+  }
+}
+
+// 处理批量退队的具体操作
+const processBatchQuit = async (members: QuitMember[]) => {
+  try {
+    loading.value = true
+    for (const member of members) {
+      await handleFinalConfirmQuit(member)
+    }
+    // 确保在操作完成后清空选中状态
+    checkedRowKeys.value = []
+    message.success(`成功处理 ${members.length} 名成员的退队`)
+  } catch (e) {
+    console.error('Failed to process batch quit:', e)
+    message.error('批量处理失败，请重试')
+    // 发生错误时也清空选中状态
+    checkedRowKeys.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+// 处理批量取消退队
+const handleBatchCancelQuit = () => {
+  dialog.warning({
+    title: '警告',
+    content: `确定要取消选中的 ${checkedRowKeys.value.length} 名成员的退队申请吗？`,
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        loading.value = true
+        // 获取所有需要的记录
+        const [leaveRecords, blacklistRecords] = await Promise.all([
+          LeaveService.getAllLeaveRecords(),
+          BlacklistService.getAllBlacklistRecords()
+        ])
+
+        for (const id of checkedRowKeys.value) {
+          const member = tableData.value.find(m => m.id === id)
+          if (member) {
+            // 删除退队记录
+            if (member.quitRecordId) {
+              await QuitService.deleteQuitRecord(member.quitRecordId)
+            }
+
+            // 获取完整的成员信息
+            const fullMember = await MemberService.getMember(member.id)
+            if (fullMember) {
+              // 重新计算成员状态
+              const currentStatus = calculateMemberStatus(fullMember, blacklistRecords, leaveRecords)
+
+              // 格式化日期
+              let formattedJoinTime = member.joinTime
+              try {
+                if (member.joinTime) {
+                  const joinDate = new Date(member.joinTime)
+                  if (!isNaN(joinDate.getTime())) {
+                    formattedJoinTime = `${joinDate.getFullYear()}-${String(joinDate.getMonth() + 1).padStart(2, '0')}-${String(joinDate.getDate()).padStart(2, '0')}`
+                  }
+                }
+              } catch (e) {
+                console.error('Error formatting date:', e)
+              }
+
+              // 更新成员状态
+              const memberData = {
+                nickname: member.nickname,
+                qq: member.qq,
+                gameId: member.gameId || '',
+                joinTime: formattedJoinTime,
+                stage: member.stage,
+                status: currentStatus,
+                onLeave: false,
+                leaveRequest: '未申请',
+                lastTrainingDate: fullMember.lastTrainingDate
+              }
+              await MemberService.updateMember(member.id, memberData)
+            }
+          }
+        }
+        // 确保在操作完成后清空选中状态
+        checkedRowKeys.value = []
+        // 重新加载数据
+        tableData.value = await loadQuitMembers()
+        message.success('批量取消处理完成')
+      } catch (e) {
+        console.error('Failed to process batch cancel:', e)
+        message.error('批量处理失败，请重试')
+        // 发生错误时也清空选中状态
+        checkedRowKeys.value = []
+      } finally {
+        loading.value = false
+      }
+    },
+    onNegativeClick: () => {
+      // 取消操作时清空选中状态
+      checkedRowKeys.value = []
+    }
+  })
+}
+
 // 表格列配置
 const columns = [
+  {
+    type: 'selection',
+    fixed: 'left',
+    width: 50
+  },
   {
     title: '昵称',
     key: 'nickname',

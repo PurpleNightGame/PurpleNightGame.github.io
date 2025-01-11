@@ -80,13 +80,22 @@ class AuthService {
   getCurrentUser(): User | null {
     if (!this.currentUser) {
       const user = AV.User.current()
+      const sessionToken = localStorage.getItem('sessionToken')
+      const remembered = localStorage.getItem('rememberLogin') === 'true'
+      
+      // 如果没有会话令牌，或者既没有记住登录也没有当前用户，则返回 null
+      if (!sessionToken || (!remembered && !user)) {
+        return null
+      }
+      
       if (user) {
         const storedUsername = user.get('username')
         this.currentUser = {
           id: user.id || '',
           username: this.ensureString(storedUsername, 'unknown'),
           role: user.get('role') || null,
-          avatar: user.get('avatar') || undefined
+          avatar: user.get('avatar') || undefined,
+          sessionToken: user.getSessionToken() || undefined
         }
       }
     }
@@ -111,6 +120,10 @@ class AuthService {
         throw new Error('用户未登录')
       }
 
+      const originalUsername = user.get('username')
+      let passwordChanged = false
+      let usernameChanged = false
+
       // 如果要更新密码
       if (info.oldPassword && info.newPassword) {
         try {
@@ -128,6 +141,7 @@ class AuthService {
             throw new Error('获取当前用户失败')
           }
           await (currentUser as any).updatePassword(info.oldPassword, info.newPassword)
+          passwordChanged = true
           
           // 重新登录以更新 session
           await AV.User.logIn(currentUsername, info.newPassword)
@@ -140,8 +154,9 @@ class AuthService {
       }
 
       // 更新用户名
-      if (info.username && info.username !== user.get('username')) {
+      if (info.username && info.username !== originalUsername) {
         user.set('username', info.username)
+        usernameChanged = true
       }
 
       // 更新头像
@@ -152,17 +167,29 @@ class AuthService {
       // 保存更改
       await user.save()
 
-      // 更新本地用户信息
-      const storedUsername = user.get('username')
-      const userData: User = {
-        id: user.id || '',
-        username: this.ensureString(storedUsername, info.username),
-        role: user.get('role') || null,
-        avatar: user.get('avatar') || undefined
+      // 如果更新了敏感信息，清除当前用户状态
+      if (passwordChanged || usernameChanged) {
+        this.currentUser = null
+      } else {
+        // 只更新本地用户信息
+        const storedUsername = user.get('username')
+        const userData: User = {
+          id: user.id || '',
+          username: this.ensureString(storedUsername, info.username),
+          role: user.get('role') || null,
+          avatar: user.get('avatar') || undefined,
+          sessionToken: user.getSessionToken() || undefined
+        }
+        this.currentUser = userData
       }
-      
-      this.currentUser = userData
-      return userData
+
+      return this.currentUser || {
+        id: user.id || '',
+        username: this.ensureString(user.get('username'), info.username),
+        role: user.get('role') || null,
+        avatar: user.get('avatar') || undefined,
+        sessionToken: user.getSessionToken() || undefined
+      }
     } catch (error: any) {
       throw new Error(error.message || '更新用户信息失败')
     }

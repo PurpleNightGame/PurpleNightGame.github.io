@@ -83,9 +83,19 @@ import { MemberService, QuitService, LeaveService } from '../../../utils/leanclo
 // 创建消息实例
 const message = useMessage()
 
+// 定义 Member 接口
+interface Member {
+  objectId: string
+  nickname: string
+  qq: string
+  gameId?: string
+  joinTime: string
+  stage: string
+  leaveRequest?: string
+}
+
 // 扩展 Member 类型
 interface UntrainedMember extends Member {
-  objectId?: string
   daysLeft: number
   status: '催促参训' | '未训退队'
 }
@@ -97,14 +107,18 @@ const loading = ref(false)
 const loadFromStorage = async (): Promise<UntrainedMember[]> => {
   try {
     loading.value = true
-    const [members, leaveRecords] = await Promise.all([
+    const [members, leaveRecords, quitRecords] = await Promise.all([
       MemberService.getAllMembers(),
-      LeaveService.getAllLeaveRecords()
+      LeaveService.getAllLeaveRecords(),
+      QuitService.getAllQuitRecords()
     ])
     
+    // 创建退队记录映射
+    const quitMemberIds = new Set(quitRecords.map(record => record.memberId))
+    
     // 过滤出非请假状态的未新训成员
-    return members
-      .filter((member: any) => {
+    const untrainedMembers = members
+      .filter((member: Member) => {
         // 检查是否处于请假状态（包括请假中和等待销假）
         const isOnLeave = leaveRecords.some(record => 
           record.memberId === member.objectId && 
@@ -119,92 +133,46 @@ const loadFromStorage = async (): Promise<UntrainedMember[]> => {
         // 只处理未新训的成员
         return member.stage === '未新训'
       })
-      .map((member: any) => {
-        const joinDate = new Date(member.joinTime)
-        const now = new Date()
-        const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
-        const daysLeft = Math.max(0, 3 - diffDays)
-        const status = daysLeft > 0 ? '催促新训' : '未训退队'
 
-        // 如果状态是未训退队，自动添加到退队记录
-        if (status === '未训退队' && !member.hasQuitRecord) {
-          handleAutoQuit(member)
-        }
+    // 处理每个成员的状态
+    const processedMembers = await Promise.all(untrainedMembers.map(async (member: Member) => {
+      const joinDate = new Date(member.joinTime)
+      const now = new Date()
+      const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
+      const daysLeft = Math.max(0, 3 - diffDays)
+      const status = daysLeft > 0 ? '催促参训' : '未训退队'
 
-        return {
-          id: member.objectId,
-          nickname: member.nickname,
-          qq: member.qq,
-          gameId: member.gameId || '',
-          joinTime: member.joinTime,
-          stage: member.stage,
-          daysLeft,
-          status
+      // 如果状态是未训退队且没有退队记录，添加退队记录
+      if (status === '未训退队' && !quitMemberIds.has(member.objectId)) {
+        try {
+          await QuitService.addQuitRecord({
+            memberId: member.objectId,
+            memberName: member.nickname,
+            memberQQ: member.qq,
+            quitDate: new Date().toISOString().split('T')[0],
+            quitType: '未训退队',
+            reason: '加入3天内未参加新训',
+            recorder: 'System'
+          })
+        } catch (error) {
+          console.error('添加退队记录失败:', error)
         }
-      })
+      }
+
+      return {
+        ...member,
+        daysLeft,
+        status
+      }
+    }))
+
+    return processedMembers
   } catch (e) {
     console.error('Failed to load data:', e)
     message.error('加载数据失败')
     return []
   } finally {
     loading.value = false
-  }
-}
-
-// 自动处理未训退队
-const handleAutoQuit = async (member: any) => {
-  try {
-    // 验证必要的成员信息是否存在
-    if (!member || !member.objectId) {
-      console.error('无效的成员数据:', member)
-      return
-    }
-
-    // 检查是否已经有退队记录
-    const quitRecords = await QuitService.getAllQuitRecords()
-    const hasQuitRecord = quitRecords.some(record => 
-      record.memberId === member.objectId && record.quitType === '未训退队'
-    )
-    
-    if (!hasQuitRecord) {
-      const quitData = {
-        memberId: member.objectId,
-        memberName: member.nickname,
-        memberQQ: member.qq,
-        quitDate: new Date().toISOString().split('T')[0],
-        quitType: '未训退队',
-        reason: '加入3天内未参加新训',
-        recorder: 'System'
-      }
-
-      // 验证所有必要字段
-      const requiredFields = ['memberId', 'memberName', 'memberQQ', 'quitDate', 'quitType', 'reason', 'recorder']
-      const missingFields = requiredFields.filter(field => !quitData[field])
-      
-      if (missingFields.length > 0) {
-        console.error('缺少必要字段:', missingFields)
-        return
-      }
-
-      // 创建退队记录
-      await QuitService.addQuitRecord(quitData)
-      
-      // 更新成员状态
-      await MemberService.updateMember(member.objectId, {
-        status: '未训退队'
-      })
-
-      console.log('已自动创建未训退队记录:', member.nickname)
-    }
-  } catch (e) {
-    console.error('Failed to handle auto quit:', e)
-    if (member) {
-      console.error('成员信息:', {
-        id: member.objectId,
-        nickname: member.nickname,
-        qq: member.qq
-      })
-    }
   }
 }
 
@@ -294,107 +262,51 @@ const columns = [
     title: '剩余天数',
     key: 'daysLeft',
     width: 100,
-    sorter: (row1: UntrainedMember, row2: UntrainedMember) => row1.daysLeft - row2.daysLeft,
-    render(row: UntrainedMember) {
-      const color = row.daysLeft > 1 ? '#2080f0' : 
-                   row.daysLeft > 0 ? '#f0a020' : '#d03050'
-      return h('span', { style: { color } }, row.daysLeft)
-    }
+    sorter: (row1: UntrainedMember, row2: UntrainedMember) => row1.daysLeft - row2.daysLeft
   },
   {
     title: '状态',
     key: 'status',
     width: 100,
-    sorter: (row1: UntrainedMember, row2: UntrainedMember) => {
-      const statusOrder = {
-        '催促参训': 0,
-        '未训退队': 1
-      }
-      return statusOrder[row1.status] - statusOrder[row2.status]
-    },
-    render(row: UntrainedMember) {
-      return h(
-        NTag,
-        {
-          type: row.status === '催促参训' ? 'warning' : 'error',
-          round: true
-        },
-        { default: () => row.status }
-      )
-    }
+    render: (row: UntrainedMember) => h(
+      NTag,
+      {
+        type: row.status === '催促参训' ? 'warning' : 'error',
+        round: true
+      },
+      { default: () => row.status }
+    )
   }
 ]
 
-// 处理分页
+// 处理分页变化
 const handlePageChange = (page: number) => {
   pagination.value.page = page
 }
 
-// 处理每页条数变化
 const handlePageSizeChange = (pageSize: number) => {
   pagination.value.pageSize = pageSize
-  // 保存到 localStorage
   localStorage.setItem('untrainedPageSize', pageSize.toString())
-  // 如果当前页超出了新的页数范围，则调整到最后一页
-  const maxPage = Math.ceil(filteredData.value.length / pageSize)
-  if (pagination.value.page > maxPage) {
-    pagination.value.page = maxPage
-  }
 }
 
-// 添加自动更新功能
-let updateTimer: number | null = null
+// 自动刷新定时器
+let refreshTimer: number | null = null
 
-const startAutoUpdate = () => {
-  updateTimer = window.setInterval(async () => {
-    tableData.value = await loadFromStorage()
-  }, 60000) // 每分钟更新一次
-}
-
-// 组件挂载时启动定时更新
+// 组件挂载时加载数据
 onMounted(async () => {
-  try {
-    loading.value = true
-    // 立即执行一次加载，确保状态同步
+  tableData.value = await loadFromStorage()
+  // 设置自动刷新（每5分钟）
+  refreshTimer = window.setInterval(async () => {
     tableData.value = await loadFromStorage()
-  } catch (e) {
-    console.error('Failed to load initial data:', e)
-    message.error('初始数据加载失败')
-  } finally {
-    loading.value = false
-  }
-  startAutoUpdate()
+  }, 300000)
 })
 
-// 组件卸载时清除定时器
+// 组件卸载时清理定时器
 onUnmounted(() => {
-  if (updateTimer) {
-    clearInterval(updateTimer)
+  if (refreshTimer !== null) {
+    clearInterval(refreshTimer)
   }
 })
-
-// 在状态更新函数中添加退队记录
-const updateMemberStatus = () => {
-  const members = JSON.parse(localStorage.getItem('training_members') || '[]')
-  const updatedMembers = members.map((member: Member) => {
-    if (member.stage === '未新训') {
-      const joinDate = new Date(member.joinTime)
-      const now = new Date()
-      const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
-      const daysLeft = Math.max(0, 3 - diffDays)
-      const newStatus = daysLeft > 0 ? '催促参训' : '未训退队'
-      // 如果状态从催促参训变为未训退队，添加退队记录
-      if (member.status === '催促参训' && newStatus === '未训退队') {
-        addQuitRecord(member, '未训退队')
-      }
-      member.status = newStatus
-    }
-    return member
-  })
-  
-  localStorage.setItem('training_members', JSON.stringify(updatedMembers))
-  return updatedMembers
-}
 </script>
 
 <style scoped>

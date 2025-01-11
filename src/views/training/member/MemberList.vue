@@ -246,26 +246,84 @@ const STORAGE_KEY = 'training_members'
 const loadFromStorage = async (): Promise<Member[]> => {
   try {
     loading.value = true
-    const [members, leaveRecords, blacklistRecords] = await Promise.all([
+    const [rawMembers, leaveRecords, blacklistRecords, quitRecords] = await Promise.all([
       MemberService.getAllMembers(),
       LeaveService.getAllLeaveRecords(),
-      BlacklistService.getAllBlacklistRecords()
+      BlacklistService.getAllBlacklistRecords(),
+      QuitService.getAllQuitRecords()
     ])
     
-    return members.map(member => {
+    // 创建退队记录映射
+    const quitMemberIds = new Set(quitRecords.map(record => record.memberId))
+    
+    // 首先清理成员数据，移除所有 LeanCloud 保留字段
+    const members = rawMembers.map(member => {
+      const cleanMember = {
+        objectId: member.objectId,
+        nickname: member.nickname,
+        qq: member.qq,
+        gameId: member.gameId,
+        joinTime: member.joinTime,
+        stage: member.stage,
+        status: member.status,
+        lastTrainingDate: member.lastTrainingDate,
+        onLeave: member.onLeave,
+        leaveRequest: member.leaveRequest
+      }
+      return cleanMember
+    })
+    
+    return await Promise.all(members.map(async member => {
       // 使用统一的状态计算函数
       const status = calculateMemberStatus(member, blacklistRecords, leaveRecords)
 
+      // 检查是否有退队记录
+      const hasQuitRecord = quitMemberIds.has(member.objectId)
+
+      // 如果有退队记录，使用退队记录中的状态
+      const finalStatus = hasQuitRecord ? 
+        quitRecords.find(record => record.memberId === member.objectId)?.quitType || status : 
+        status
+
+      // 格式化加入时间
+      let formattedJoinTime = member.joinTime
+      try {
+        if (member.joinTime) {
+          const joinDate = new Date(member.joinTime)
+          if (!isNaN(joinDate.getTime())) {
+            formattedJoinTime = `${joinDate.getFullYear()}-${String(joinDate.getMonth() + 1).padStart(2, '0')}-${String(joinDate.getDate()).padStart(2, '0')}`
+          }
+        }
+      } catch (e) {
+        console.error('Error formatting date:', e)
+      }
+
+      // 如果成员状态是退队状态但没有退队记录，添加退队记录
+      if ((finalStatus === '未训退队' || finalStatus === '违规退队' || finalStatus === '超时退队') && !hasQuitRecord) {
+        await QuitService.addQuitRecord({
+          memberId: member.objectId,
+          memberName: member.nickname,
+          memberQQ: member.qq,
+          quitDate: formatDate(new Date()),
+          reason: finalStatus === '未训退队' ? '未参训' : 
+                 finalStatus === '违规退队' ? '违规退队' : '超时退队',
+          quitType: finalStatus
+        })
+      }
+
       return {
         id: member.objectId,
-        nickname: member.nickname,
-        qq: member.qq,
+        nickname: member.nickname || '',
+        qq: member.qq || '',
         gameId: member.gameId || '',
-        joinTime: member.joinTime,
-        stage: member.stage,
-        status: status
+        joinTime: formattedJoinTime || '',
+        stage: member.stage || '',
+        status: finalStatus,
+        lastTrainingDate: member.lastTrainingDate || '',
+        onLeave: member.onLeave || false,
+        leaveRequest: member.leaveRequest || '未申请'
       }
-    })
+    }))
   } catch (e) {
     console.error('Failed to load data:', e)
     message.error('加载数据失败')
@@ -297,9 +355,22 @@ const saveToStorage = async (data: Member[]) => {
   try {
     loading.value = true
     for (const member of data) {
-      const { id, points, quit, ...memberData } = member // 移除不需要保存的字段
-      if (id) {
-        await MemberService.updateMember(id, memberData)
+      if (member.id) {
+        // 只包含需要更新的字段，排除保留字段
+        const memberData = {
+          nickname: member.nickname,
+          qq: member.qq,
+          gameId: member.gameId || '',
+          joinTime: member.joinTime,
+          stage: member.stage,
+          status: member.status,
+          onLeave: member.onLeave || false,
+          leaveRequest: member.leaveRequest || '未申请',
+          lastTrainingDate: member.lastTrainingDate
+        }
+        // 确保移除所有保留字段
+        const { createdAt, updatedAt, objectId, ...cleanedData } = memberData as any
+        await MemberService.updateMember(member.id, cleanedData)
       }
     }
   } catch (e) {
@@ -392,35 +463,6 @@ const formatDate = (date: Date): string => {
   const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
   return `${utcDate.getUTCFullYear()}-${String(utcDate.getUTCMonth() + 1).padStart(2, '0')}-${String(utcDate.getUTCDate()).padStart(2, '0')}`
 }
-
-// 监听成员状态变化
-watch(() => tableData.value, async (newData) => {
-  if (!newData) return
-
-  newData.forEach(async (member) => {
-    if (member.status === '未训退队') {
-      // 添加退队记录
-      await QuitService.addQuitRecord({
-        memberId: member.id,
-        memberName: member.nickname,
-        memberQQ: member.qq,
-        quitDate: formatDate(new Date()),
-        reason: '未参训',
-        quitType: '未训退队'
-      })
-    } else if (member.status === '违规退队') {
-      // 添加违规退队记录
-      await BlacklistQuitService.addBlacklistQuitRecord({
-        memberId: member.id,
-        memberName: member.nickname,
-        memberQQ: member.qq,
-        quitDate: formatDate(new Date()),
-        reason: '违规退队',
-        quitType: '违规退队'
-      })
-    }
-  })
-}, { deep: true })
 
 // 定义表格列
 const columns = [
@@ -656,6 +698,7 @@ const stageOptions = [
 const statusOptions = [
   { label: '正常', value: '正常' },
   { label: '异常', value: '异常' },
+  { label: '催促新训', value: '催促新训' },
   { label: '催促参训', value: '催促参训' },
   { label: '未训退队', value: '未训退队' },
   { label: '超时退队', value: '超时退队' },
@@ -714,6 +757,18 @@ const handleSubmit = async () => {
     await formRef.value?.validate()
     loading.value = true
 
+    // 根据阶段确定初始状态
+    const determineStatus = (stage: string | null, currentStatus: string | null = null) => {
+      if (stage === '未新训') {
+        return '催促参训'
+      }
+      if (stage === '紫夜') {
+        return '正常'
+      }
+      // 编辑模式下保持当前状态，除非是未新训
+      return currentStatus || '正常'
+    }
+
     if (editingId.value) {
       // 编辑模式
       const memberData = {
@@ -722,7 +777,9 @@ const handleSubmit = async () => {
         gameId: formValue.value.gameId || '',
         joinTime: new Date(formValue.value.joinTime!).toLocaleDateString('zh-CN').replace(/\//g, '-'),
         stage: formValue.value.stage,
-        status: formValue.value.stage === '未新训' ? '催促参训' : '正常'
+        status: determineStatus(formValue.value.stage, formValue.value.status),
+        onLeave: false,
+        leaveRequest: '未申请'
       }
       await MemberService.updateMember(editingId.value, memberData)
     } else {
@@ -733,7 +790,7 @@ const handleSubmit = async () => {
         gameId: formValue.value.gameId || '',
         joinTime: new Date(formValue.value.joinTime!).toLocaleDateString('zh-CN').replace(/\//g, '-'),
         stage: formValue.value.stage!,
-        status: formValue.value.stage === '未新训' ? '催促参训' : '正常',
+        status: determineStatus(formValue.value.stage),
         onLeave: false,
         leaveRequest: '未申请'
       }
@@ -802,29 +859,73 @@ const loadMemberRecords = async (member: Member) => {
     const leaveRecords = await LeaveService.getAllLeaveRecords()
     memberLeaveRecords.value = leaveRecords
       .filter((record: any) => record.memberId === member.id)
-      .map((record: any) => ({
-        ...record,
-        startDate: record.startDate,
-        endDate: record.endDate,
-        reason: record.reason,
-        status: record.status
-      }))
+      .map((record: any) => {
+        // 格式化日期
+        let formattedStartDate = record.startDate
+        let formattedEndDate = record.endDate
+        try {
+          if (record.startDate) {
+            const startDate = new Date(record.startDate)
+            if (!isNaN(startDate.getTime())) {
+              formattedStartDate = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`
+            }
+          }
+          if (record.endDate) {
+            const endDate = new Date(record.endDate)
+            if (!isNaN(endDate.getTime())) {
+              formattedEndDate = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
+            }
+          }
+        } catch (e) {
+          console.error('Error formatting dates:', e)
+        }
+
+        // 只返回需要的字段
+        return {
+          id: record.objectId,
+          startDate: formattedStartDate,
+          endDate: formattedEndDate,
+          reason: record.reason || '',
+          status: record.status || '请假中'
+        }
+      })
 
     // 从 LeanCloud 加载违规记录
     const blacklistRecords = await BlacklistService.getAllBlacklistRecords()
     memberBlacklistRecords.value = blacklistRecords
       .filter((record: any) => record.memberId === member.id)
-      .map((record: any) => ({
-        ...record,
-        recordDate: record.recordDate,
-        reason: record.reason,
-        points: record.points || 1,
-        status: record.status || '有效'
-      }))
+      .map((record: any) => {
+        // 格式化日期
+        let formattedRecordDate = record.recordDate
+        try {
+          if (record.recordDate) {
+            const recordDate = new Date(record.recordDate)
+            if (!isNaN(recordDate.getTime())) {
+              formattedRecordDate = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(2, '0')}-${String(recordDate.getDate()).padStart(2, '0')}`
+            }
+          }
+        } catch (e) {
+          console.error('Error formatting record date:', e)
+        }
+
+        // 只返回需要的字段
+        return {
+          id: record.objectId,
+          recordDate: formattedRecordDate,
+          level: record.level || '警告',
+          reason: record.reason || '',
+          points: record.points || 1,
+          status: record.status || '有效'
+        }
+      })
 
     // 更新成员状态
     if (selectedMember.value) {
-      selectedMember.value.status = calculateMemberStatus(member, blacklistRecords, leaveRecords)
+      const currentStatus = calculateMemberStatus(member, blacklistRecords, leaveRecords)
+      selectedMember.value = {
+        ...selectedMember.value,
+        status: currentStatus
+      }
     }
   } catch (e) {
     console.error('Failed to load member records:', e)
@@ -940,8 +1041,8 @@ const getStatusType = (status: string) => {
       return 'success'
     case '异常':
       return 'error'
-    case '催促参训':
     case '催促新训':
+    case '催促参训':
       return 'warning'
     case '未训退队':
     case '超时退队':

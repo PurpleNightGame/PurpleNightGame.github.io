@@ -46,6 +46,17 @@
                     新训管理
                   </n-button>
                 </n-button-group>
+                <n-button
+                  quaternary
+                  circle
+                  class="refresh-button"
+                  :loading="refreshing"
+                  @click="handleRefreshAll"
+                >
+                  <template #icon>
+                    <refresh-outline />
+                  </template>
+                </n-button>
                 <n-dropdown
                   :options="userMenuOptions"
                   @select="handleMenuSelect"
@@ -64,7 +75,37 @@
               </div>
             </div>
           </n-layout-header>
-          <n-layout-content position="absolute" style="top: 64px; bottom: 0;">
+          <div class="tabs-bar">
+            <n-scrollbar x-scrollable>
+              <div class="tabs-wrapper">
+                <div
+                  v-for="tab in tabs"
+                  :key="tab.path"
+                  class="tab"
+                  :class="{ active: currentPath === tab.path }"
+                  @click="handleTabClick(tab)"
+                >
+                  <span class="tab-icon">
+                    <component :is="tab.icon || DocumentOutline" />
+                  </span>
+                  <span class="tab-label">{{ tab.label }}</span>
+                  <n-button
+                    v-if="tabs.length > 1"
+                    quaternary
+                    circle
+                    size="tiny"
+                    class="tab-close"
+                    @click.stop="closeTab(tab)"
+                  >
+                    <template #icon>
+                      <close-outline />
+                    </template>
+                  </n-button>
+                </div>
+              </div>
+            </n-scrollbar>
+          </div>
+          <n-layout-content position="absolute" style="top: 104px; bottom: 0;">
             <div class="content-container">
               <router-view></router-view>
             </div>
@@ -80,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { NIcon, useTheme, lightTheme } from 'naive-ui'
 import type { MenuOption, GlobalThemeOverrides } from 'naive-ui'
 import { 
@@ -100,13 +141,17 @@ import {
   PersonOutline, 
   AlertCircleOutline,
   SettingsOutline,
-  PersonCircleOutline
+  PersonCircleOutline,
+  RefreshOutline,
+  CloseOutline
 } from '@vicons/ionicons5'
 import { h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { authService } from '../services/auth-service'
 import { createDiscreteApi } from 'naive-ui'
 import UserSettings from '../components/UserSettings.vue'
+import { MemberService, LeaveService, BlacklistService, QuitService, BlacklistQuitService } from '@/utils/leancloud'
+import { validateUser } from '@/utils/leancloud-service'
 
 const { message } = createDiscreteApi(['message'])
 const theme = lightTheme
@@ -454,7 +499,12 @@ const themeOverrides: GlobalThemeOverrides = {
 // 用户信息
 const username = computed(() => {
   const user = authService.getCurrentUser()
-  return user?.username || '用户'
+  if (!user) {
+    // 如果未登录，重定向到登录页面
+    router.replace('/login')
+    return ''
+  }
+  return user.username
 })
 
 // 用户头像
@@ -501,6 +551,140 @@ const handleMenuSelect = async (key: string) => {
 const handleUserSettingsSuccess = () => {
   message.success('设置已更新')
 }
+
+// 添加刷新状态
+const refreshing = ref(false)
+
+// 添加页面路由列表
+const refreshPages = [
+  // 成员管理
+  '/training/member/list',      // 成员列表
+  '/training/member/status',    // 成员状态
+  '/training/assessment',       // 考核管理
+  '/training/member/quit',      // 退队审批
+  
+  // 时间管理
+  '/training/schedule',         // 日期总表
+  '/training/reminders',        // 催促名单
+  '/training/untrained',        // 未训名单
+  '/training/passed',           // 通过名单
+  
+  // 请假管理
+  '/training/leave-records',    // 请假记录
+  '/training/end-leave',        // 结束请假
+  
+  // 黑点管理
+  '/training/blacklist/records', // 黑点记录
+  '/training/blacklist/remove',  // 消除黑点
+  '/training/blacklist/quit'     // 违规退队
+]
+
+// 修改刷新所有数据的方法
+const handleRefreshAll = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+
+  try {
+    // 先进行一次用户验证
+    await validateUser()
+
+    // 保存当前页面路径
+    const currentRoute = router.currentRoute.value
+
+    // 遍历所有页面
+    for (const path of refreshPages) {
+      message.info(`正在刷新${path}页面数据...`)
+      
+      // 切换到目标页面
+      await router.push(path)
+      
+      // 等待页面加载和数据刷新
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+
+    // 返回原始页面
+    await router.push({
+      path: currentRoute.path,
+      query: { ...currentRoute.query, _t: Date.now() }
+    })
+
+    message.success('所有页面刷新成功')
+  } catch (error: any) {
+    console.error('刷新失败:', error)
+    message.error('刷新失败: ' + (error.message || '未知错误'))
+  } finally {
+    refreshing.value = false
+  }
+}
+
+// 定义标签页接口
+interface Tab {
+  path: string
+  label: string
+  icon?: any
+  closable?: boolean
+}
+
+// 标签页状态
+const tabs = ref<Tab[]>([])
+const currentPath = computed(() => route.path)
+
+// 查找菜单选项
+const findMenuOption = (options: MenuOption[], path: string): MenuOption | null => {
+  for (const option of options) {
+    if (option.path === path) {
+      return option
+    }
+    if (option.children) {
+      const found = findMenuOption(option.children, path)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+// 处理标签点击
+const handleTabClick = (tab: Tab) => {
+  if (tab.path !== currentPath.value) {
+    router.push(tab.path)
+  }
+}
+
+// 关闭标签页
+const closeTab = (tab: Tab) => {
+  const index = tabs.value.findIndex(t => t.path === tab.path)
+  if (index > -1) {
+    tabs.value.splice(index, 1)
+    // 如果关闭的是当前标签，则跳转到最后一个标签
+    if (tab.path === currentPath.value) {
+      const lastTab = tabs.value[tabs.value.length - 1]
+      router.push(lastTab.path)
+    }
+  }
+}
+
+// 监听路由变化，自动添加标签页
+watch(
+  () => route,
+  (newRoute) => {
+    const path = newRoute.path
+    const existingTab = tabs.value.find(tab => tab.path === path)
+    
+    if (!existingTab) {
+      // 获取菜单配置中的标签信息
+      const menuOption = findMenuOption([...hrMenuOptions, ...trainingMenuOptions], path)
+      if (menuOption) {
+        tabs.value.push({
+          path,
+          label: menuOption.label as string,
+          icon: menuOption.icon,
+          closable: true
+        })
+      }
+    }
+  },
+  { immediate: true, deep: true }
+)
 </script>
 
 <style scoped>
@@ -734,5 +918,111 @@ const handleUserSettingsSuccess = () => {
 
 :deep(.n-dropdown-option:hover) {
   background-color: rgba(123, 31, 162, 0.1);
+}
+
+.refresh-button {
+  margin-right: 16px;
+  transition: all 0.3s ease;
+}
+
+.refresh-button:hover {
+  background-color: rgba(121, 40, 202, 0.1);
+  color: #7928CA;
+}
+
+.refresh-button:active {
+  transform: scale(0.95);
+}
+
+.tabs-bar {
+  height: 40px;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  padding: 0 16px;
+  box-sizing: border-box;
+  overflow: hidden; /* 防止出现垂直滚动条 */
+}
+
+.tabs-wrapper {
+  display: inline-flex;
+  height: 100%;
+  padding: 4px 0;
+  box-sizing: border-box;
+  flex-wrap: nowrap; /* 防止标签换行 */
+}
+
+/* 自定义水平滚动条样式 */
+:deep(.n-scrollbar.n-scrollbar--horizontal) {
+  height: 40px !important; /* 确保滚动区域高度正确 */
+}
+
+:deep(.n-scrollbar-rail.n-scrollbar-rail--horizontal) {
+  height: 4px !important; /* 调整水平滚动条高度 */
+  bottom: 0 !important;
+}
+
+:deep(.n-scrollbar-content) {
+  display: flex !important;
+  align-items: center !important;
+  height: 100% !important;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 16px;
+  margin-right: 6px;
+  border-radius: 6px;
+  background: #f5f5f5;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  background: #ede7f6;
+  color: #7B1FA2;
+}
+
+.tab.active {
+  background: #7B1FA2;
+  color: #fff;
+}
+
+.tab-icon {
+  margin-right: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.tab-label {
+  margin-right: 4px;
+}
+
+.tab-close {
+  opacity: 0;
+  transition: all 0.3s ease;
+  margin-left: 4px;
+}
+
+.tab:hover .tab-close {
+  opacity: 1;
+}
+
+.tab.active .tab-close {
+  opacity: 1;
+  color: #fff;
+}
+
+.tab-close:hover {
+  background-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* 调整内容区域的位置，为标签栏留出空间 */
+.content-container {
+  height: calc(100% - 40px);
 }
 </style> 

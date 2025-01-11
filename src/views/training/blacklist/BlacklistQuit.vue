@@ -67,6 +67,9 @@ import { BlacklistQuitService, MemberService, BlacklistService, QuitService } fr
 // 创建消息实例
 const message = useMessage()
 
+// 定义自动更新定时器
+let updateTimer: number | null = null
+
 // 定义违规退队记录接口
 interface BlacklistQuitRecord {
   id: string
@@ -107,12 +110,21 @@ const handleConfirmQuit = async (row: any) => {
     
     // 更新成员状态为违规退队
     const member = await MemberService.getMember(row.memberId)
-    await MemberService.updateMember(row.memberId, {
-      ...member,
-      status: '违规退队'
-    })
-    
-    // 添加到退队记录
+    if (!member) {
+      throw new Error('找不到该成员')
+    }
+
+    // 检查是否已存在退队记录
+    const quitRecords = await QuitService.getAllQuitRecords()
+    const hasQuitRecord = quitRecords.some(record => record.memberId === row.memberId)
+
+    // 如果已存在退队记录，显示提示并返回
+    if (hasQuitRecord) {
+      message.warning('该成员已有退队记录')
+      return
+    }
+
+    // 添加退队记录
     await QuitService.addQuitRecord({
       memberId: row.memberId,
       memberName: row.memberName,
@@ -122,9 +134,15 @@ const handleConfirmQuit = async (row: any) => {
       type: '违规退队',
       quitType: '违规退队'
     })
+
+    // 然后更新成员状态
+    await MemberService.updateMember(row.memberId, {
+      ...member,
+      status: '违规退队'
+    })
     
-    // 从表格中移除该成员
-    tableData.value = tableData.value.filter(item => item.memberId !== row.memberId)
+    // 立即更新表格数据
+    await updateTableData()
     
     message.success('已确认违规退队')
   } catch (e) {
@@ -203,28 +221,70 @@ const columns = [
 const loadFromStorage = async (): Promise<BlacklistQuitRecord[]> => {
   try {
     loading.value = true
-    const records = await BlacklistQuitService.getAllBlacklistQuitRecords()
-    const members = await MemberService.getAllMembers()
-    const blacklistRecords = await BlacklistService.getAllBlacklistRecords()
+    const [members, blacklistRecords, quitRecords] = await Promise.all([
+      MemberService.getAllMembers(),
+      BlacklistService.getAllBlacklistRecords(),
+      QuitService.getAllQuitRecords()
+    ])
     
     // 计算每个成员的黑点数
     const memberBlacklistCounts = new Map()
     blacklistRecords.forEach(record => {
-      const count = memberBlacklistCounts.get(record.memberId) || 0
-      memberBlacklistCounts.set(record.memberId, count + 1)
-    })
-    
-    return records.map(record => {
-      const member = members.find(m => m.objectId === record.memberId)
-      return {
-        id: record.objectId,
-        memberId: record.memberId,
-        memberName: member ? member.nickname : '未知成员',
-        memberQQ: member ? member.qq : '',
-        blacklistCount: memberBlacklistCounts.get(record.memberId) || 0,
-        status: '违规退队'
+      // 只计算有效的黑点记录
+      if (record.status !== '已失效') {
+        const count = memberBlacklistCounts.get(record.memberId) || 0
+        const points = record.points || 1
+        memberBlacklistCounts.set(record.memberId, count + points)
       }
     })
+    
+    // 获取已经处理过退队的成员ID列表
+    const quitMemberIds = new Set(quitRecords.map(record => record.memberId))
+    
+    // 筛选出黑点数大于等于4且未退队的成员
+    const result = []
+    for (const [memberId, blacklistCount] of memberBlacklistCounts.entries()) {
+      // 如果成员已经退队，跳过
+      if (quitMemberIds.has(memberId)) {
+        continue
+      }
+      
+      // 如果黑点数大于等于4，添加到结果中
+      if (blacklistCount >= 4) {
+        const member = members.find(m => m.objectId === memberId)
+        if (member) {
+          // 如果成员已经是违规退队状态，跳过
+          if (member.status === '违规退队') {
+            continue
+          }
+          
+          // 如果成员状态是违规退队但没有退队记录，添加退队记录
+          if (member.status === '违规退队' && !quitMemberIds.has(memberId)) {
+            await QuitService.addQuitRecord({
+              memberId: member.objectId,
+              memberName: member.nickname,
+              memberQQ: member.qq,
+              quitDate: new Date().toISOString().split('T')[0],
+              reason: '黑点数达到4个',
+              type: '违规退队',
+              quitType: '违规退队'
+            })
+            continue
+          }
+          
+          result.push({
+            id: member.objectId,
+            memberId: member.objectId,
+            memberName: member.nickname,
+            memberQQ: member.qq,
+            blacklistCount: blacklistCount,
+            status: '待处理'
+          })
+        }
+      }
+    }
+    
+    return result
   } catch (e) {
     console.error('Failed to load data:', e)
     message.error('加载数据失败')
@@ -234,10 +294,10 @@ const loadFromStorage = async (): Promise<BlacklistQuitRecord[]> => {
   }
 }
 
-// 表格数据
+// 修改表格数据的初始化和更新
 const tableData = ref<BlacklistQuitRecord[]>([])
 
-// 修改表格数据的计算属性
+// 添加过滤后的数据计算属性
 const filteredData = computed(() => {
   let result = tableData.value
 
@@ -261,22 +321,37 @@ const filteredData = computed(() => {
   return result
 })
 
-// 添加成员选项
-const memberOptions = ref([])
-
-// 加载成员选项
-const loadMemberOptions = async () => {
+// 添加一个立即更新数据的函数
+const updateTableData = async () => {
   try {
-    const members = await MemberService.getAllMembers()
-    memberOptions.value = members.map(member => ({
-      label: `${member.nickname} (${member.qq})${member.gameId ? ` - ${member.gameId}` : ''}`,
-      value: member.objectId
-    }))
+    const data = await loadFromStorage()
+    tableData.value = data
+    // 更新分页配置
+    pagination.value.itemCount = data.length
   } catch (e) {
-    console.error('Failed to load member options:', e)
-    message.error('加载成员列表失败')
+    console.error('Failed to update table data:', e)
+    message.error('更新数据失败')
   }
 }
+
+// 修改自动更新逻辑
+const startAutoUpdate = () => {
+  updateTimer = window.setInterval(updateTableData, 60000) // 每分钟更新一次
+}
+
+// 修改组件挂载时的初始化
+onMounted(async () => {
+  await loadMemberOptions()
+  await updateTableData()
+  startAutoUpdate()
+})
+
+// 组件卸载时清除定时器
+onUnmounted(() => {
+  if (updateTimer) {
+    clearInterval(updateTimer)
+  }
+})
 
 // 修改处理添加的函数
 const handleAdd = () => {
@@ -359,28 +434,22 @@ const handleSubmit = async () => {
   }
 }
 
-// 添加自动更新功能
-let updateTimer: number | null = null
+// 添加成员选项
+const memberOptions = ref([])
 
-const startAutoUpdate = () => {
-  updateTimer = window.setInterval(async () => {
-    tableData.value = await loadFromStorage()
-  }, 60000) // 每分钟更新一次
-}
-
-// 组件挂载时加载数据和启动定时更新
-onMounted(async () => {
-  await loadMemberOptions()
-  tableData.value = await loadFromStorage()
-  startAutoUpdate()
-})
-
-// 组件卸载时清除定时器
-onUnmounted(() => {
-  if (updateTimer) {
-    clearInterval(updateTimer)
+// 加载成员选项
+const loadMemberOptions = async () => {
+  try {
+    const members = await MemberService.getAllMembers()
+    memberOptions.value = members.map(member => ({
+      label: `${member.nickname} (${member.qq})${member.gameId ? ` - ${member.gameId}` : ''}`,
+      value: member.objectId
+    }))
+  } catch (e) {
+    console.error('Failed to load member options:', e)
+    message.error('加载成员列表失败')
   }
-})
+}
 </script>
 
 <style scoped>

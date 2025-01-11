@@ -163,7 +163,7 @@ const loadFromStorage = async (): Promise<ExtendedMember[]> => {
       BlacklistService.getAllBlacklistRecords()
     ])
     
-    return members.map((member: any) => {
+    return await Promise.all(members.map(async (member: any) => {
       // 检查所有未结束的请假记录
       const hasActiveLeaves = leaveRecords.some((record: any) => 
         record.memberId === member.objectId && 
@@ -173,14 +173,25 @@ const loadFromStorage = async (): Promise<ExtendedMember[]> => {
       // 使用统一的状态计算函数
       const status = calculateMemberStatus(member, blacklistRecords, leaveRecords)
 
+      // 检查是否有退队记录
+      const hasQuitRecord = quitRecords.some(record => 
+        record.memberId === member.objectId && 
+        ['未训退队', '超时退队', '违规退队'].includes(record.quitType)
+      )
+
+      // 如果有退队记录，使用退队记录中的状态
+      const finalStatus = hasQuitRecord ? 
+        quitRecords.find(record => record.memberId === member.objectId)?.quitType || status : 
+        status
+
       return {
         ...member,
         id: member.objectId,
         onLeave: hasActiveLeaves,
         leaveRequest: member.leaveRequest || '未申请',
-        status: status
+        status: finalStatus
       }
-    })
+    }))
   } catch (e) {
     console.error('Failed to load data:', e)
     message.error('加载数据失败')

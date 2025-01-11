@@ -158,16 +158,22 @@ interface BlacklistRecord {
 // 表格加载状态
 const loading = ref(false)
 
-// 从数据库加载数据
+// 修改数据加载函数
 const loadFromStorage = async (): Promise<BlacklistRecord[]> => {
   try {
     loading.value = true
-    const records = await BlacklistService.getAllBlacklistRecords()
-    const members = await MemberService.getAllMembers()
-    const blacklistRemoveRecords = await BlacklistService.getAllBlacklistRemoveRecords()
-    const blacklistQuitRecords = await BlacklistQuitService.getAllBlacklistQuitRecords()
-    const leaveRecords = await LeaveService.getAllLeaveRecords()
     
+    // 分批加载数据
+    const [records, members] = await Promise.all([
+      BlacklistService.getAllBlacklistRecords(),
+      MemberService.getAllMembers()
+    ])
+
+    // 只有在需要时才加载其他数据
+    let blacklistRemoveRecords = []
+    let blacklistQuitRecords = []
+    let leaveRecords = []
+
     // 按成员ID分组记录
     const memberRecords = new Map()
     records.forEach(record => {
@@ -175,37 +181,45 @@ const loadFromStorage = async (): Promise<BlacklistRecord[]> => {
       memberRecordList.push(record)
       memberRecords.set(record.memberId, memberRecordList)
     })
+
+    // 只有当有需要处理的记录时才加载额外数据
+    if (memberRecords.size > 0) {
+      [blacklistRemoveRecords, blacklistQuitRecords, leaveRecords] = await Promise.all([
+        BlacklistService.getAllBlacklistRemoveRecords(),
+        BlacklistQuitService.getAllBlacklistQuitRecords(),
+        LeaveService.getAllLeaveRecords()
+      ])
+    }
     
     // 处理每个成员的记录
     for (const [memberId, recordList] of memberRecords.entries()) {
-      // 按日期排序记录
-      recordList.sort((a, b) => new Date(b.recordDate).getTime() - new Date(a.recordDate).getTime())
-      
-      // 获取最新记录
-      const latestRecord = recordList[0]
-      const latestDate = new Date(latestRecord.recordDate)
-      const now = new Date()
-      
-      // 计算时间差（毫秒）
-      const timeDiff = now.getTime() - latestDate.getTime()
-      const daysDiff = timeDiff / (1000 * 60 * 60 * 24)
-      
-      // 检查是否已经有消除记录
-      const hasRemoveRecord = blacklistRemoveRecords.some(record => 
-        record.memberId === memberId && 
-        new Date(record.recordDate).getTime() > latestDate.getTime()
-      )
+      try {
+        // 按日期排序记录
+        recordList.sort((a, b) => new Date(b.recordDate).getTime() - new Date(a.recordDate).getTime())
+        
+        // 获取最新记录
+        const latestRecord = recordList[0]
+        const latestDate = new Date(latestRecord.recordDate)
+        const now = new Date()
+        
+        // 计算时间差（毫秒）
+        const timeDiff = now.getTime() - latestDate.getTime()
+        const daysDiff = timeDiff / (1000 * 60 * 60 * 24)
+        
+        // 检查是否已经有消除记录
+        const hasRemoveRecord = blacklistRemoveRecords.some(record => 
+          record.memberId === memberId && 
+          new Date(record.recordDate).getTime() > latestDate.getTime()
+        )
 
-      // 检查成员是否处于请假状态
-      const isOnLeave = leaveRecords.some(record => 
-        record.memberId === memberId && 
-        record.status === '请假中'
-      )
-      
-      // 如果最新记录超过1个月（30天）且没有更新的消除记录，且不在请假中
-      if (daysDiff > 30 && !hasRemoveRecord && !isOnLeave) {
-        try {
-          // 添加到黑点消除记录
+        // 检查成员是否处于请假状态
+        const isOnLeave = leaveRecords.some(record => 
+          record.memberId === memberId && 
+          record.status === '请假中'
+        )
+        
+        // 如果最新记录超过1个月（30天）且没有更新的消除记录，且不在请假中
+        if (daysDiff > 30 && !hasRemoveRecord && !isOnLeave) {
           await BlacklistService.addBlacklistRemoveRecord({
             memberId,
             recordDate: now.toISOString().split('T')[0],
@@ -214,18 +228,13 @@ const loadFromStorage = async (): Promise<BlacklistRecord[]> => {
           })
 
           // 删除该成员的所有黑点记录
-          for (const record of recordList) {
-            await BlacklistService.deleteBlacklistRecord(record.id)
-          }
-        } catch (e) {
-          console.error('Failed to process blacklist records:', e)
+          await Promise.all(recordList.map(record => 
+            BlacklistService.deleteBlacklistRecord(record.id)
+          ))
         }
-      }
-      
-      // 如果黑点数大于等于4且还没有违规退队记录
-      if (recordList.length >= 4 && !blacklistQuitRecords.some(record => record.memberId === memberId)) {
-        try {
-          // 添加到违规退队记录
+        
+        // 如果黑点数大于等于4且还没有违规退队记录
+        if (recordList.length >= 4 && !blacklistQuitRecords.some(record => record.memberId === memberId)) {
           await BlacklistQuitService.addBlacklistQuitRecord({
             memberId,
             quitDate: now.toISOString().split('T')[0],
@@ -233,9 +242,10 @@ const loadFromStorage = async (): Promise<BlacklistRecord[]> => {
             recorder: 'System',
             quitType: '违规退队'
           })
-        } catch (e) {
-          console.error('Failed to add blacklist quit record:', e)
         }
+      } catch (e) {
+        console.error('处理成员记录时出错:', e)
+        message.error('处理成员记录时出错，请稍后重试')
       }
     }
     
@@ -255,8 +265,8 @@ const loadFromStorage = async (): Promise<BlacklistRecord[]> => {
       }
     })
   } catch (e) {
-    console.error('Failed to load data:', e)
-    message.error('加载数据失败')
+    console.error('加载数据时出错:', e)
+    message.error('加载数据时出错，请稍后重试')
     return []
   } finally {
     loading.value = false
