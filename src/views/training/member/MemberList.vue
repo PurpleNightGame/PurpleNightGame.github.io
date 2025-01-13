@@ -280,10 +280,32 @@ const loadFromStorage = async (): Promise<Member[]> => {
       // 检查是否有退队记录
       const hasQuitRecord = quitMemberIds.has(member.objectId)
 
-      // 如果有退队记录，使用退队记录中的状态
-      const finalStatus = hasQuitRecord ? 
-        quitRecords.find(record => record.memberId === member.objectId)?.quitType || status : 
-        status
+      // 确定最终状态
+      let finalStatus = status
+      
+      // 首先根据成员阶段确定基础状态
+      if (member.stage === '未新训') {
+        // 未新训成员检查是否未训退队
+        const joinDate = new Date(member.joinTime)
+        const now = new Date()
+        const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
+        if (diffDays > 3) {
+          finalStatus = '未训退队'
+        } else {
+          finalStatus = '催促参训'
+        }
+      } else {
+        // 非未新训成员默认为正常状态
+        finalStatus = status === '未训退队' ? '正常' : status
+      }
+
+      // 然后检查是否有退队记录，但只对未新训成员生效
+      if (hasQuitRecord && member.stage === '未新训') {
+        const quitRecord = quitRecords.find(record => record.memberId === member.objectId)
+        if (quitRecord) {
+          finalStatus = quitRecord.quitType
+        }
+      }
 
       // 格式化加入时间
       let formattedJoinTime = member.joinTime
