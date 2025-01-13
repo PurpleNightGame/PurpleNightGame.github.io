@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import Layout from '../layout/Layout.vue'
 import Login from '../views/Login.vue'
 import { authService } from '../services/auth-service'
@@ -7,7 +7,7 @@ import { createDiscreteApi } from 'naive-ui'
 const { message } = createDiscreteApi(['message'])
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(),
   routes: [
     {
       path: '/login',
