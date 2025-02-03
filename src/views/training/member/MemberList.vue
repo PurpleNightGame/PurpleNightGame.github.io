@@ -253,99 +253,35 @@ const loadFromStorage = async (): Promise<Member[]> => {
       QuitService.getAllQuitRecords()
     ])
     
-    // 创建退队记录映射
-    const quitMemberIds = new Set(quitRecords.map(record => record.memberId))
-    
-    // 首先清理成员数据，移除所有 LeanCloud 保留字段
-    const members = rawMembers.map(member => {
-      const cleanMember = {
-        objectId: member.objectId,
-        nickname: member.nickname,
-        qq: member.qq,
-        gameId: member.gameId,
-        joinTime: member.joinTime,
-        stage: member.stage,
-        status: member.status,
-        lastTrainingDate: member.lastTrainingDate,
-        onLeave: member.onLeave,
-        leaveRequest: member.leaveRequest
-      }
-      return cleanMember
-    })
-    
-    return await Promise.all(members.map(async member => {
-      // 使用统一的状态计算函数
-      const status = calculateMemberStatus(member, blacklistRecords, leaveRecords)
-
-      // 检查是否有退队记录
-      const hasQuitRecord = quitMemberIds.has(member.objectId)
-
-      // 确定最终状态
-      let finalStatus = status
+    return rawMembers.map(member => {
+      // 计算成员状态
+      const calculatedStatus = calculateMemberStatus(member, blacklistRecords, leaveRecords)
       
-      // 首先根据成员阶段确定基础状态
-      if (member.stage === '未新训') {
-        // 未新训成员检查是否未训退队
-        const joinDate = new Date(member.joinTime)
-        const now = new Date()
-        const diffDays = Math.floor((now.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24))
-        if (diffDays > 3) {
-          finalStatus = '未训退队'
-        } else {
-          finalStatus = '催促参训'
-        }
-      } else {
-        // 非未新训成员默认为正常状态
-        finalStatus = status === '未训退队' ? '正常' : status
-      }
+      // 检查是否有退队记录
+      const quitRecord = quitRecords.find(record => record.memberId === member.objectId)
+      
+      // 确定最终状态
+      let finalStatus = member.status // 默认使用原始状态
 
-      // 然后检查是否有退队记录，但只对未新训成员生效
-      if (hasQuitRecord && member.stage === '未新训') {
-        const quitRecord = quitRecords.find(record => record.memberId === member.objectId)
-        if (quitRecord) {
-          finalStatus = quitRecord.quitType
-        }
+      // 如果有退队记录，使用退队记录的状态
+      if (quitRecord?.quitType) {
+        finalStatus = quitRecord.quitType
+      } 
+      // 如果计算状态是退队状态，使用计算状态
+      else if (['未训退队', '超时退队', '违规退队'].includes(calculatedStatus)) {
+        finalStatus = calculatedStatus
       }
-
-      // 格式化加入时间
-      let formattedJoinTime = member.joinTime
-      try {
-        if (member.joinTime) {
-          const joinDate = new Date(member.joinTime)
-          if (!isNaN(joinDate.getTime())) {
-            formattedJoinTime = `${joinDate.getFullYear()}-${String(joinDate.getMonth() + 1).padStart(2, '0')}-${String(joinDate.getDate()).padStart(2, '0')}`
-          }
-        }
-      } catch (e) {
-        console.error('Error formatting date:', e)
-      }
-
-      // 如果成员状态是退队状态但没有退队记录，添加退队记录
-      if ((finalStatus === '未训退队' || finalStatus === '违规退队' || finalStatus === '超时退队') && !hasQuitRecord) {
-        await QuitService.addQuitRecord({
-          memberId: member.objectId,
-          memberName: member.nickname,
-          memberQQ: member.qq,
-          quitDate: formatDate(new Date()),
-          reason: finalStatus === '未训退队' ? '未参训' : 
-                 finalStatus === '违规退队' ? '违规退队' : '超时退队',
-          quitType: finalStatus
-        })
+      // 如果原始状态是退队状态，保持原始状态
+      else if (['未训退队', '超时退队', '违规退队'].includes(member.status)) {
+        finalStatus = member.status
       }
 
       return {
+        ...member,
         id: member.objectId,
-        nickname: member.nickname || '',
-        qq: member.qq || '',
-        gameId: member.gameId || '',
-        joinTime: formattedJoinTime || '',
-        stage: member.stage || '',
-        status: finalStatus,
-        lastTrainingDate: member.lastTrainingDate || '',
-        onLeave: member.onLeave || false,
-        leaveRequest: member.leaveRequest || '未申请'
+        status: finalStatus || calculatedStatus // 确保始终有一个状态值
       }
-    }))
+    })
   } catch (e) {
     console.error('Failed to load data:', e)
     message.error('加载数据失败')
@@ -565,7 +501,7 @@ const columns = [
           type: getStatusType(row.status),
           round: true
         },
-        { default: () => row.status }
+        { default: () => row.status || '未知' }
       )
     }
   },

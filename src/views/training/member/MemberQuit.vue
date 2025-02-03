@@ -93,8 +93,12 @@ const loading = ref(false)
 const loadQuitMembers = async (): Promise<QuitMember[]> => {
   try {
     loading.value = true
-    const quitRecords = await QuitService.getAllQuitRecords()
-    const members = await MemberService.getAllMembers()
+    const [quitRecords, members, blacklistRecords, leaveRecords] = await Promise.all([
+      QuitService.getAllQuitRecords(),
+      MemberService.getAllMembers(),
+      BlacklistService.getAllBlacklistRecords(),
+      LeaveService.getAllLeaveRecords()
+    ])
     
     // 使用Map来存储每个成员的最新退队记录
     const memberQuitMap = new Map()
@@ -108,54 +112,38 @@ const loadQuitMembers = async (): Promise<QuitMember[]> => {
     
     // 遍历所有退队记录
     quitRecords.forEach(record => {
-      const existingRecord = memberQuitMap.get(record.memberId)
-      if (!existingRecord) {
-        // 如果不存在记录，直接添加
+      if (!memberQuitMap.has(record.memberId)) {
         memberQuitMap.set(record.memberId, record)
-      } else {
-        // 如果存在记录，比较时间，保留最新的
-        const existingDate = existingRecord.createdAt ? new Date(existingRecord.createdAt).getTime() : 0
-        const currentDate = record.createdAt ? new Date(record.createdAt).getTime() : 0
-        if (currentDate > existingDate) {
-          memberQuitMap.set(record.memberId, record)
-        }
       }
     })
     
     // 转换为数组并添加成员信息
-    return Array.from(memberQuitMap.values())
+    const result = Array.from(memberQuitMap.values())
       .map(record => {
         const member = members.find(m => m.objectId === record.memberId)
         if (!member) return null
         
-        // 格式化加入时间
-        let formattedJoinTime = member.joinTime
-        try {
-          if (member.joinTime) {
-            const joinDate = new Date(member.joinTime)
-            if (!isNaN(joinDate.getTime())) {
-              formattedJoinTime = `${joinDate.getFullYear()}-${String(joinDate.getMonth() + 1).padStart(2, '0')}-${String(joinDate.getDate()).padStart(2, '0')}`
-            }
-          }
-        } catch (e) {
-          console.error('Error formatting date:', e)
-        }
+        // 计算成员状态
+        const calculatedStatus = calculateMemberStatus(member, blacklistRecords, leaveRecords)
+        // 如果原始退队类型存在则使用原始类型，否则如果计算状态是退队状态则使用计算状态
+        const quitType = record.quitType || 
+          (['未训退队', '超时退队', '违规退队'].includes(calculatedStatus) ? calculatedStatus : null)
         
-        // 返回格式化的数据
         return {
           id: member.objectId,
           nickname: member.nickname,
           qq: member.qq,
           gameId: member.gameId || '',
-          joinTime: formattedJoinTime,
+          joinTime: member.joinTime,
           stage: member.stage,
-          status: member.status,
-          quitReason: record.quitType,
+          quitReason: quitType || calculatedStatus,
           quitRecordId: record.objectId,
           createdAt: record.createdAt
         }
       })
       .filter(Boolean) as QuitMember[]
+    
+    return result
   } catch (e) {
     console.error('Failed to load quit members:', e)
     message.error('加载数据失败')
@@ -599,12 +587,16 @@ const columns = [
   {
     title: '退队原因',
     key: 'quitReason',
-    render: (row: QuitMember) => {
+    width: 130,
+    render(row: QuitMember) {
       return h(NTag, {
-        type: getQuitReasonType(row.quitReason),
-        round: true
+        type: 'error',
+        round: true,
+        style: {
+          minWidth: '80px'
+        }
       }, {
-        default: () => row.quitReason
+        default: () => row.quitReason || '未知'
       })
     }
   },
@@ -659,6 +651,25 @@ const columns = [
   }
 ]
 
+// 获取状态标签类型
+const getStatusType = (status: string) => {
+  switch (status) {
+    case '正常':
+      return 'success'
+    case '异常':
+      return 'error'
+    case '催促新训':
+    case '催促参训':
+      return 'warning'
+    case '未训退队':
+    case '超时退队':
+    case '违规退队':
+      return 'error'
+    default:
+      return 'default'
+  }
+}
+
 // 添加自动更新功能
 let updateTimer: number | null = null
 
@@ -694,5 +705,10 @@ onUnmounted(() => {
 <style scoped>
 :deep(.n-data-table .n-data-table-td) {
   padding: 8px;
+}
+
+:deep(.n-tag) {
+  padding: 0 8px;
+  justify-content: center;
 }
 </style> 
