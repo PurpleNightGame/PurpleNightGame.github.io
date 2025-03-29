@@ -1,0 +1,415 @@
+import { useState, useEffect } from 'react';
+import { Layout, Menu, theme, Typography, Avatar, Dropdown, Badge, Card, Row, Col, Statistic } from 'antd';
+import { 
+  UserOutlined, 
+  TeamOutlined, 
+  CalendarOutlined, 
+  TrophyOutlined,
+  SettingOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  BellOutlined,
+  RiseOutlined,
+  FireOutlined,
+  StarOutlined
+} from '@ant-design/icons';
+import { useNavigate, useLocation, Link, Outlet } from 'react-router-dom';
+import { userService } from '../utils/leancloud';
+
+const { Header, Sider, Content } = Layout;
+const { Title, Text } = Typography;
+
+const Dashboard = () => {
+  // 从localStorage读取初始折叠状态
+  const [collapsed, setCollapsed] = useState(() => {
+    const savedState = localStorage.getItem('menuCollapsed');
+    return savedState ? JSON.parse(savedState) : false;
+  });
+  const navigate = useNavigate();
+  const location = useLocation();
+  
+  const {
+    token: { colorBgContainer, borderRadiusLG },
+  } = theme.useToken();
+
+  // 当collapsed状态变化时，保存到localStorage
+  useEffect(() => {
+    localStorage.setItem('menuCollapsed', JSON.stringify(collapsed));
+  }, [collapsed]);
+
+  // 获取当前页面对应的菜单键
+  const getSelectedKey = () => {
+    const pathname = location.pathname;
+    if (pathname === '/dashboard') return '1';
+    if (pathname === '/members') return '2';
+    if (pathname === '/activities') return '3';
+    if (pathname === '/ranking') return '4';
+    if (pathname === '/settings') return '5';
+    
+    // 子菜单项
+    if (pathname === '/add-member') return 'add-member';
+    if (pathname === '/training-record') return 'training-record';
+    if (pathname === '/exam-management') return 'exam-mgmt';
+    if (pathname === '/training-statistics') return 'training-stat';
+    if (pathname === '/untrained-list') return 'untrained-list';
+    if (pathname === '/urging-list') return 'urge-list';
+    if (pathname === '/leave-management') return 'leave-mgmt';
+    if (pathname === '/blackpoint-management') return 'blackpoint-mgmt';
+    if (pathname === '/quit-approval') return 'quit-approval';
+    if (pathname === '/quit-record') return 'quit-record';
+    
+    return '1';
+  };
+
+  const handleLogout = async () => {
+    await userService.logout();
+    navigate('/login');
+  };
+
+  const handleMenuClick = (key: string) => {
+    switch (key) {
+      case '1':
+        navigate('/dashboard');
+        break;
+      case '2':
+        navigate('/members');
+        break;
+      case '3':
+        navigate('/activities');
+        break;
+      case '4':
+        navigate('/ranking');
+        break;
+      case '5':
+        navigate('/settings');
+        break;
+      // 成员管理子菜单
+      case 'add-member':
+        navigate('/add-member');
+        break;
+      case 'training-record':
+        navigate('/training-record');
+        break;
+      // 训练管理子菜单
+      case 'exam-mgmt':
+        navigate('/exam-management');
+        break;
+      case 'training-stat':
+        navigate('/training-statistics');
+        break;
+      // 状态管理子菜单
+      case 'untrained-list':
+        navigate('/untrained-list');
+        break;
+      case 'urge-list':
+        navigate('/urging-list');
+        break;
+      case 'leave-mgmt':
+        navigate('/leave-management');
+        break;
+      case 'blackpoint-mgmt':
+        navigate('/blackpoint-management');
+        break;
+      // 退队管理子菜单
+      case 'quit-approval':
+        navigate('/quit-approval');
+        break;
+      case 'quit-record':
+        navigate('/quit-record');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const userMenuItems = [
+    {
+      key: 'profile',
+      icon: <UserOutlined />,
+      label: '个人资料',
+    },
+    {
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: '退出登录',
+      onClick: handleLogout,
+    },
+  ];
+
+  // 获取当前页面标题
+  const getPageTitle = () => {
+    const pathname = location.pathname;
+    if (pathname === '/dashboard') return '仪表盘';
+    if (pathname === '/members') return '成员列表';
+    if (pathname === '/add-member') return '添加成员';
+    if (pathname === '/training-record') return '新训记录';
+    if (pathname === '/exam-management') return '考核管理';
+    if (pathname === '/training-statistics') return '训练统计';
+    if (pathname === '/untrained-list') return '未训名单';
+    if (pathname === '/urging-list') return '催促名单';
+    if (pathname === '/leave-management') return '请假管理';
+    if (pathname === '/blackpoint-management') return '黑点管理';
+    if (pathname === '/quit-approval') return '退队审批';
+    if (pathname === '/quit-record') return '退队记录';
+    if (pathname === '/activities') return '活动管理';
+    if (pathname === '/ranking') return '贡献排行';
+    if (pathname === '/settings') return '系统设置';
+    return '';
+  };
+
+  // 明确的折叠切换函数
+  const toggleCollapsed = () => {
+    setCollapsed(!collapsed);
+  };
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      <Sider 
+        trigger={null} 
+        collapsible 
+        collapsed={collapsed} 
+        theme="dark"
+        style={{ 
+          boxShadow: '0 0 10px rgba(0,0,0,0.1)', 
+          zIndex: 10,
+          overflow: 'auto',
+          height: '100vh',
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          bottom: 0
+        }}
+      >
+        <div style={{ 
+          height: 64, 
+          margin: '16px 0', 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          padding: '0 16px'
+        }}>
+          <Title level={4} style={{ color: '#fff', margin: 0, whiteSpace: 'nowrap' }}>
+            {collapsed ? 'PG' : '紫夜公会管理'}
+          </Title>
+        </div>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[getSelectedKey()]}
+          onClick={({ key }) => handleMenuClick(key)}
+          items={[
+            {
+              key: '1',
+              icon: <UserOutlined />,
+              label: '仪表盘',
+            },
+            {
+              key: 'member-mgmt',
+              icon: <TeamOutlined />,
+              label: '成员管理',
+              children: [
+                {
+                  key: '2',
+                  label: '成员列表',
+                },
+                {
+                  key: 'add-member',
+                  label: '添加成员',
+                },
+                {
+                  key: 'training-record',
+                  label: '新训记录',
+                }
+              ]
+            },
+            {
+              key: 'training-mgmt',
+              icon: <CalendarOutlined />,
+              label: '训练管理',
+              children: [
+                {
+                  key: 'exam-mgmt',
+                  label: '考核管理',
+                },
+                {
+                  key: 'training-stat',
+                  label: '训练统计',
+                }
+              ]
+            },
+            {
+              key: 'status-mgmt',
+              icon: <TrophyOutlined />,
+              label: '状态管理',
+              children: [
+                {
+                  key: 'untrained-list',
+                  label: '未训名单',
+                },
+                {
+                  key: 'urge-list',
+                  label: '催促名单',
+                },
+                {
+                  key: 'leave-mgmt',
+                  label: '请假管理',
+                },
+                {
+                  key: 'blackpoint-mgmt',
+                  label: '黑点管理',
+                }
+              ]
+            },
+            {
+              key: 'quit-mgmt',
+              icon: <LogoutOutlined />,
+              label: '退队管理',
+              children: [
+                {
+                  key: 'quit-approval',
+                  label: '退队审批',
+                },
+                {
+                  key: 'quit-record',
+                  label: '退队记录',
+                }
+              ]
+            },
+            {
+              key: '5',
+              icon: <SettingOutlined />,
+              label: '系统设置',
+            },
+          ]}
+        />
+      </Sider>
+      <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'all 0.2s' }}>
+        <Header style={{ 
+          padding: '0 16px', 
+          background: colorBgContainer, 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          position: 'sticky',
+          top: 0,
+          zIndex: 9,
+          width: '100%',
+          boxShadow: '0 1px 4px rgba(0, 0, 0, 0.08)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {collapsed ? 
+              <MenuUnfoldOutlined onClick={toggleCollapsed} style={{ fontSize: '18px', cursor: 'pointer' }} /> : 
+              <MenuFoldOutlined onClick={toggleCollapsed} style={{ fontSize: '18px', cursor: 'pointer' }} />
+            }
+            <span style={{ marginLeft: 16, fontSize: 16, fontWeight: 'bold' }}>
+              {getPageTitle()}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <Badge count={5} size="small">
+              <BellOutlined style={{ fontSize: '18px', cursor: 'pointer', marginRight: 24 }} />
+            </Badge>
+            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <Avatar style={{ backgroundColor: '#722ed1' }} icon={<UserOutlined />} />
+                <span style={{ marginLeft: 8 }}>管理员</span>
+              </div>
+            </Dropdown>
+          </div>
+        </Header>
+        
+        <Content
+          style={{
+            margin: '24px 16px',
+            padding: location.pathname === '/dashboard' ? 0 : 24,
+            minHeight: 280,
+            background: location.pathname === '/dashboard' ? 'transparent' : colorBgContainer,
+            borderRadius: borderRadiusLG,
+          }}
+        >
+          {location.pathname === '/dashboard' && (
+            <Row gutter={[16, 16]}>
+              <Col span={24}>
+                <Card>
+                  <Title level={3} style={{ color: '#722ed1', marginBottom: 24 }}>欢迎使用紫夜公会管理系统</Title>
+                  <Text>这里是您的仪表盘，您可以查看公会的整体情况和最近活动。</Text>
+                </Card>
+              </Col>
+              
+              <Col xs={24} sm={12} md={6}>
+                <Card hoverable>
+                  <Statistic 
+                    title="公会成员" 
+                    value={42} 
+                    prefix={<TeamOutlined style={{ color: '#722ed1' }} />} 
+                    valueStyle={{ color: '#722ed1' }}
+                  />
+                </Card>
+              </Col>
+              
+              <Col xs={24} sm={12} md={6}>
+                <Card hoverable>
+                  <Statistic 
+                    title="本周活动" 
+                    value={3} 
+                    prefix={<CalendarOutlined style={{ color: '#eb2f96' }} />}
+                    valueStyle={{ color: '#eb2f96' }}
+                  />
+                </Card>
+              </Col>
+              
+              <Col xs={24} sm={12} md={6}>
+                <Card hoverable>
+                  <Statistic 
+                    title="活跃成员" 
+                    value={28} 
+                    prefix={<FireOutlined style={{ color: '#fa8c16' }} />}
+                    valueStyle={{ color: '#fa8c16' }}
+                    suffix={<Text type="secondary" style={{ fontSize: '14px' }}>/ 42</Text>}
+                  />
+                </Card>
+              </Col>
+              
+              <Col xs={24} sm={12} md={6}>
+                <Card hoverable>
+                  <Statistic 
+                    title="平均贡献度" 
+                    value={78.5} 
+                    prefix={<RiseOutlined style={{ color: '#52c41a' }} />}
+                    valueStyle={{ color: '#52c41a' }}
+                    precision={1}
+                    suffix={<StarOutlined />}
+                  />
+                </Card>
+              </Col>
+              
+              <Col span={24}>
+                <Card title="最近活动" extra={<Link to="/activities">查看全部</Link>}>
+                  <p>公会集会 - 2023年7月15日 19:30</p>
+                  <p>副本攻略 - 2023年7月18日 20:00</p>
+                  <p>新人培训 - 2023年7月20日 19:00</p>
+                </Card>
+              </Col>
+              
+              <Col span={24}>
+                <Card title="贡献榜前五" extra={<Link to="/ranking">查看全部</Link>}>
+                  <p>1. 紫夜之星 - 120点</p>
+                  <p>2. 暗影刺客 - 110点</p>
+                  <p>3. 烈焰法师 - 105点</p>
+                  <p>4. 月光游侠 - 98点</p>
+                  <p>5. 圣盾骑士 - 92点</p>
+                </Card>
+              </Col>
+            </Row>
+          )}
+          
+          {location.pathname !== '/dashboard' && <Outlet />}
+        </Content>
+      </Layout>
+    </Layout>
+  );
+};
+
+export default Dashboard;
